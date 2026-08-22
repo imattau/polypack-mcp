@@ -213,20 +213,31 @@ class PolypackBackend(InMemoryBackend):
 
     def _node(self, memory_id: str) -> dict[str, Any]:
         node = self.graph._nodes[memory_id]
-        content = node.get("data", {}).get("content", "")
+        data = node.get("data", {})
+        content = data.get("content", "")
+        provenance = dict(data.get("provenance", {}))
+        if node.get("derivedFrom") is not None:
+            provenance.setdefault("derivedFrom", node["derivedFrom"])
+        if node.get("supersedes") is not None:
+            provenance.setdefault("supersedes", node["supersedes"])
         return {"id": memory_id, "content": content, "class": node.get("memoryClass", "semantic"),
-                "context": node.get("data", {}).get("context"), "confidence": node.get("data", {}).get("confidence", 1.0),
-                "provenance": node.get("data", {}).get("provenance", {}), "activation": self.graph.get_activation(memory_id) or 0,
-                "suppressed": bool(node.get("data", {}).get("suppressed", False)),
+                "context": data.get("context"), "confidence": node.get("confidence", data.get("confidence", 1.0)),
+                "provenance": provenance, "activation": self.graph.get_activation(memory_id) or 0,
+                "suppressed": bool(data.get("suppressed", False)) or bool(self.engine.inhibition_of(memory_id) > 0),
                 "tokenEstimate": estimate_tokens(content)}
 
     def feedback(self, memory_id: str, useful: bool, **kwargs: Any) -> dict[str, Any]:
         before = self.graph.get_activation(memory_id) or 0
+        weights_before = self.engine.get_weights()
         self.engine.record_feedback(memory_id, useful)
         self.graph.reinforce_node(memory_id, 0.1 if useful else -0.1, "mcp_feedback")
         after = self.graph.get_activation(memory_id) or 0
-        return {"memory_id": memory_id, "useful": useful, "activation_before": before,
-                "activation_after": after, "weights_changed": False}
+        weights_after = self.engine.get_weights()
+        result = {"memory_id": memory_id, "useful": useful, "activation_before": before,
+                  "activation_after": after, "weights_changed": weights_before != weights_after}
+        if weights_before != weights_after:
+            result.update(weights_before=weights_before, weights_after=weights_after)
+        return result
 
     def suppress(self, memory_id: str, **kwargs: Any) -> dict[str, Any]:
         self.graph.suppress_node(memory_id, kwargs.get("amount", 0.5), "mcp_suppress")
@@ -268,23 +279,23 @@ class PolypackBackend(InMemoryBackend):
     def context(self, context: str, **kwargs: Any) -> dict[str, Any]:
         budget = kwargs.get("token_budget")
         if budget is not None and budget <= 0: raise ValueError("token_budget must be greater than zero")
-        try:
-            selected = self.engine.workingMemory({"limit": kwargs.get("limit", 10), "context": context,
-                "tokenBudget": budget, "costOf": lambda memory: estimate_tokens(memory.content)})
-            items = [self._node(item["id"] if isinstance(item, dict) else item.id) for item in selected]
-        except (AttributeError, TypeError):
-            ranked = self.recall("", context=context, strict_context=kwargs.get("strict_context", False), limit=100)["items"]
-            used, items = 0, []
-            for item in ranked:
-                if budget is not None and used + item["tokenEstimate"] > budget: continue
-                items.append(item); used += item["tokenEstimate"]
-                if len(items) >= kwargs.get("limit", 10): break
+        selected = self.engine.working_memory(limit=kwargs.get("limit", 10), context=context,
+            context_fallback=not kwargs.get("strict_context", False), token_budget=budget,
+            cost_of=lambda memory: estimate_tokens(memory.get("data", {}).get("content", "")))
+        items = [self._node(item["id"]) for item in selected
+                 if not self._node(item["id"])["suppressed"]]
         used = sum(item["tokenEstimate"] for item in items)
-        return {"items": items, "metadata": {"retrievalVersion": RETRIEVAL_VERSION,
+        matched = sum(1 for item in items if item["context"] == context)
+        fallback = any(item["context"] is None for item in items)
+        metadata = {"retrievalVersion": RETRIEVAL_VERSION,
                 "candidateCount": self.graph.size, "matchedContext": sum(1 for item in items if item["context"] == context),
                 "budgetRequested": budget, "budgetUsed": used,
                 "remainingBudget": None if budget is None else budget - used,
-                "selectionCount": len(items), "fallbackAttempted": any(item["context"] is None for item in items)}}
+                "selectionCount": len(items), "fallbackAttempted": fallback,
+                "activationLayer": "ActivationEngine.working_memory"}
+        if not items and context and matched == 0:
+            metadata.update(reason="no_context_match", searchedContext=context)
+        return {"items": items, "metadata": metadata, **({"reason": metadata["reason"], "searched_context": context} if "reason" in metadata else {})}
 
     def graph_query(self, operation: str, **kwargs: Any) -> dict[str, Any]:
         if operation == "schema": return {"nodes": ["memory"], "edges": sorted({e.get("type") for e in self.graph._edges.values() for e in e.values()})}

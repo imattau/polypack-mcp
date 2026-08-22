@@ -33,6 +33,8 @@ consolidation materialize `SUPERSEDES`, `SUPERSEDED_BY`, and
 
 Pass `--store` to open a durable Polypack directory. Without it, the server uses
 the in-memory reference backend, which is convenient for smoke tests.
+The `polypack` extra requires `polypack-db>=3.2.0` and uses its native
+`ActivationEngine.working_memory` selector for context assembly.
 
 ## Development
 
