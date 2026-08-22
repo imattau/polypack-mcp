@@ -24,8 +24,8 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
             recalled = await session.call_tool("memory_recall", {
                 "query": "MCP protocol", "context": "test"
             })
-            recalled_payload = [json.loads(block.text) for block in recalled.content]
-            assert recalled_payload[0]["id"] == memory["id"]
+            recalled_payload = json.loads(recalled.content[0].text)
+            assert recalled_payload["items"][0]["id"] == memory["id"]
             stats = await session.read_resource("polypack://stats")
             assert '"memories": 1' in stats.contents[0].text
 

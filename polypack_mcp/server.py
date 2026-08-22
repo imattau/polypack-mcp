@@ -21,14 +21,24 @@ def create_server(backend: MemoryBackend | None = None):
         return service.store(content, memory_class, context, confidence, provenance, metadata)
 
     @mcp.tool()
-    def memory_recall(query: str, context: str | None = None, limit: int = 10) -> list[dict]:
+    def memory_recall(query: str, context: str | None = None, limit: int = 10,
+                      strict_context: bool = False) -> dict:
         """Hybrid semantic, graph, and activation-weighted retrieval."""
-        return backend.recall(query, context=context, limit=max(1, min(limit, 100)))
+        return backend.recall(query, context=context, strict_context=strict_context,
+                              limit=max(1, min(limit, 100)))
 
     @mcp.tool()
-    def memory_context(context: str, limit: int = 10, token_budget: int | None = None) -> list[dict]:
-        """Return a budgeted working-memory set for a context."""
-        return backend.context(context, limit=max(1, min(limit, 100)), token_budget=token_budget)
+    def memory_context(context: str, limit: int = 10, token_budget: int | None = None,
+                       strict_context: bool = False) -> dict:
+        """Return a working-memory set selected by activation and estimated-token budget.
+
+        token_budget is an estimated-token budget. Each returned memory fits wholly
+        within the remaining budget; budgets must be greater than zero.
+        """
+        if token_budget is not None and token_budget <= 0:
+            raise ValueError("token_budget must be greater than zero")
+        return backend.context(context, limit=max(1, min(limit, 100)), token_budget=token_budget,
+                               strict_context=strict_context)
 
     @mcp.tool()
     def memory_feedback(memory_id: str, useful: bool, agent_id: str = "default") -> dict:
