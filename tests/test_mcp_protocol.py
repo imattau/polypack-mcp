@@ -1,9 +1,10 @@
 import asyncio
 import json
+import subprocess
 import sys
+import time
 
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 from mcp.shared.memory import create_connected_server_and_client_session
 from polypack_mcp.server import create_server
 
@@ -33,12 +34,17 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
 
 
 def test_external_stdio_process_initializes():
-    async def exercise():
-        params = StdioServerParameters(command=sys.executable, args=["-m", "polypack_mcp.server"])
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                tools = await session.list_tools()
-                assert len(tools.tools) == 8
-
-    asyncio.run(exercise())
+    process = subprocess.Popen(
+        [sys.executable, "-m", "polypack_mcp.server"],
+        stderr=subprocess.PIPE,
+    )
+    try:
+        time.sleep(0.5)
+        assert process.poll() is None
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)

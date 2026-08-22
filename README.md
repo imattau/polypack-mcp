@@ -55,7 +55,7 @@ automatically. It runs as the dedicated `polypack` user, stores data in
 `/var/lib/polypack-mcp`, and exposes the same local SSE endpoint:
 
 ```sh
-sudo apt install ./polypack-mcp_<version>_all.deb
+sudo apt install ./polypack-mcp_<version>_amd64.deb
 ```
 
 After installation, point Claude and Codex at

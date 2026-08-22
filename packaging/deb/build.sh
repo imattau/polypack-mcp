@@ -6,7 +6,8 @@ output_dir="${2:?usage: build.sh VERSION OUTPUT_DIR}"
 root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
 
-stage="$root/polypack-mcp_${version}_all"
+architecture="$(dpkg --print-architecture)"
+stage="$root/polypack-mcp_${version}_${architecture}"
 mkdir -p "$stage/DEBIAN" "$stage/usr/lib/polypack-mcp" "$stage/usr/bin" "$stage/lib/systemd/system" "$stage/etc/default"
 python3 -m pip install --no-deps --target "$stage/usr/lib/polypack-mcp" .
 python3 -m pip install --target "$stage/usr/lib/polypack-mcp" 'polypack-db>=3.2.0' 'mcp>=1.9,<1.10' 'anyio>=4.5,<4.10'
@@ -24,7 +25,7 @@ Package: polypack-mcp
 Version: $version
 Section: utils
 Priority: optional
-Architecture: all
+Architecture: $architecture
 Depends: python3, adduser
 Suggests: systemd
 Maintainer: Polypack contributors
@@ -78,4 +79,4 @@ EOF
 chmod 0755 "$stage/DEBIAN/postinst"
 
 mkdir -p "$output_dir"
-dpkg-deb --build "$stage" "$output_dir/polypack-mcp_${version}_all.deb"
+dpkg-deb --build "$stage" "$output_dir/polypack-mcp_${version}_${architecture}.deb"

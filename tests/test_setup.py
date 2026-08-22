@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from polypack_mcp.setup import print_client_config
 
 

@@ -63,9 +63,33 @@ jobs:
       - name: Publish distributions
         uses: pypa/gh-action-pypi-publish@release/v1
 
+  deb:
+    name: Build Debian package
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Debian package
+        run: packaging/deb/build.sh "${GITHUB_REF_NAME#v}" dist
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-package
+          path: dist/*.deb
+          if-no-files-found: error
+
   github-release:
     name: Create GitHub Release
-    needs: [verify, publish]
+    needs: [verify, publish, deb]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -75,9 +99,14 @@ jobs:
           name: python-distributions
           path: dist/
 
+      - name: Download Debian package
+        uses: actions/download-artifact@v4
+        with:
+          name: debian-package
+          path: dist/
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: dist/*
-
