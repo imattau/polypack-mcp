@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polypack-mcp"
+version = "0.1.0"
+description = "MCP server exposing Polypack as persistent adaptive memory"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.10,<1.11", "anyio>=4.5,<4.10"]
+
+[project.optional-dependencies]
+polypack = ["polypack-db>=3.1"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+polypack-mcp = "polypack_mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["polypack_mcp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
