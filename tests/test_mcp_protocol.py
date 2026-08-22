@@ -1,6 +1,9 @@
 import asyncio
 import json
+import sys
 
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from mcp.shared.memory import create_connected_server_and_client_session
 from polypack_mcp.server import create_server
 
@@ -25,5 +28,17 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
             assert recalled_payload[0]["id"] == memory["id"]
             stats = await session.read_resource("polypack://stats")
             assert '"memories": 1' in stats.contents[0].text
+
+    asyncio.run(exercise())
+
+
+def test_external_stdio_process_initializes():
+    async def exercise():
+        params = StdioServerParameters(command=sys.executable, args=["-m", "polypack_mcp.server"])
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                assert len(tools.tools) == 8
 
     asyncio.run(exercise())
