@@ -81,8 +81,13 @@ chown -R polypack:polypack /var/lib/polypack-mcp
 chmod 0750 /var/lib/polypack-mcp
 if command -v systemctl >/dev/null; then
     systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl enable --now polypack-mcp.service >/dev/null 2>&1 || \
-        echo "polypack-mcp installed; start it with: systemctl start polypack-mcp"
+    if systemctl is-active --quiet polypack-mcp.service; then
+        systemctl restart polypack-mcp.service >/dev/null 2>&1 || \
+            echo "polypack-mcp updated; restart it with: systemctl restart polypack-mcp"
+    else
+        systemctl enable --now polypack-mcp.service >/dev/null 2>&1 || \
+            echo "polypack-mcp installed; start it with: systemctl start polypack-mcp"
+    fi
 fi
 
 %files
