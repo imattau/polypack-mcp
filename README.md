@@ -90,10 +90,11 @@ pip install -e '.[polypack]'
 polypack-mcp --store ./polypack-data
 ```
 
-The server exposes eight focused tools: `memory_store`, `memory_recall`,
+The server exposes nine focused tools: `memory_store`, `memory_recall`,
 `memory_context`, `memory_feedback`, `memory_suppress`, `memory_supersede`,
-`memory_consolidate`, and `graph_query`. It also publishes context, active-memory,
-schema, and stats resources under `polypack://`.
+`memory_consolidate`, `memory_link`, and `graph_query`. It also publishes context,
+active-memory, schema, stats, and agent workflow guidance resources under
+`polypack://`.
 
 Memory classes are `entity`, `episodic`, `procedural`, and `semantic`. Store
 project or user preferences as `procedural` memories; `preference` is not a
@@ -111,6 +112,25 @@ than or equal to zero are rejected. Context is a soft preference: matching
 memories are preferred and unscoped global memories may be used as fallback.
 Pass `strict_context: true` for isolation. An empty isolated result reports
 `reason: "no_context_match"` and the searched context.
+
+`memory_recall` can optionally hydrate related graph memories in the same call:
+
+```json
+{
+  "query": "identity cache fix",
+  "context": "cross-agent",
+  "include_neighbors": true,
+  "edge_types": ["RESPONDS_TO"],
+  "depth": 2,
+  "limit": 20,
+  "token_budget": 4000
+}
+```
+
+Neighbor traversal is opt-in and bounded. Neighbor items include their distance
+and connecting relationship metadata. Use `memory_link` with the default
+`RESPONDS_TO` relationship for handoffs, reviews, and fixes that address an
+earlier memory. See `polypack://help/workflow` for the agent-facing workflow.
 
 Feedback is activation feedback: `useful=true` reinforces a memory and
 `useful=false` provides negative retrieval feedback. Responses expose activation

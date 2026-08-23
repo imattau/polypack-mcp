@@ -50,6 +50,7 @@ class MemoryBackend(Protocol):
     def supersede(self, new_id: str, old_id: str) -> dict[str, Any]: ...
     def consolidate(self, source_ids: list[str], content: str, **kwargs: Any) -> dict[str, Any]: ...
     def graph_query(self, operation: str, **kwargs: Any) -> dict[str, Any]: ...
+    def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]: ...
     def stats(self) -> dict[str, Any]: ...
 
 
@@ -114,8 +115,84 @@ class InMemoryBackend:
     def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         context, limit = kwargs.get("context"), kwargs.get("limit", 10)
         ranked, diagnostics = self._rank(query, context, kwargs.get("strict_context", False))
-        return self._response(ranked[:limit], diagnostics, matchedContext=sum(1 for x in ranked if x["context"] == context) if context else 0,
-                              fallbackAttempted=bool(context and any(x["context"] is None for x in ranked)))
+        budget = kwargs.get("token_budget")
+        if budget is not None and budget <= 0:
+            raise ValueError("token_budget must be greater than zero")
+        primary = []
+        used = 0
+        primary_candidates = ranked
+        if kwargs.get("include_neighbors"):
+            lexical_matches = [item for item in ranked if item["scoreComponents"]["lexical"] > 0]
+            primary_candidates = lexical_matches or ranked[:1]
+        for item in primary_candidates:
+            if len(primary) >= limit:
+                break
+            if budget is not None and used + item["tokenEstimate"] > budget:
+                continue
+            item["retrievalRole"] = "primary"
+            primary.append(item)
+            used += item["tokenEstimate"]
+
+        neighbor_count = 0
+        if kwargs.get("include_neighbors"):
+            primary, used, neighbor_count = self._append_neighbors(
+                primary, context=context, strict_context=kwargs.get("strict_context", False),
+                limit=limit, token_budget=budget, edge_types=kwargs.get("edge_types"),
+                depth=kwargs.get("depth", 1), used_budget=used)
+        diagnostics.update({"matchedContext": sum(1 for x in ranked if x["context"] == context) if context else 0,
+                            "fallbackAttempted": bool(context and any(x["context"] is None for x in ranked)),
+                            "budgetRequested": budget, "budgetUsed": used,
+                            "remainingBudget": None if budget is None else budget - used,
+                            "neighborCount": neighbor_count,
+                            "includeNeighbors": bool(kwargs.get("include_neighbors", False))})
+        return self._response(primary, diagnostics)
+
+    def _edges_for(self, memory_id: str) -> list[dict[str, Any]]:
+        return [edge for edge in self.edges
+                if edge["source"] == memory_id or edge["target"] == memory_id]
+
+    def _append_neighbors(self, primary: list[dict[str, Any]], *, context: str | None,
+                          strict_context: bool, limit: int, token_budget: int | None,
+                          edge_types: list[str] | None, depth: int,
+                          used_budget: int) -> tuple[list[dict[str, Any]], int, int]:
+        if not primary or depth <= 0:
+            return primary, used_budget, 0
+        selected_ids = {item["id"] for item in primary}
+        frontier = set(selected_ids)
+        neighbor_count = 0
+        for distance in range(1, min(depth, 3) + 1):
+            next_frontier: set[str] = set()
+            for node_id in sorted(frontier):
+                for edge in self._edges_for(node_id):
+                    if edge_types and edge["type"] not in set(edge_types):
+                        continue
+                    neighbor_id = edge["target"] if edge["source"] == node_id else edge["source"]
+                    if neighbor_id in selected_ids:
+                        continue
+                    next_frontier.add(neighbor_id)
+                    memory = self.memories.get(neighbor_id)
+                    if memory is None or memory.suppressed or memory.superseded_by:
+                        continue
+                    if context and (memory.context != context if strict_context else memory.context not in (None, context)):
+                        continue
+                    item = memory.as_dict()
+                    cost = item["tokenEstimate"]
+                    if len(primary) >= limit or (token_budget is not None and used_budget + cost > token_budget):
+                        continue
+                    item.update(retrievalRole="neighbor", distance=distance,
+                                relationship={"edge": edge,
+                                              "direction": "outgoing" if edge["source"] == node_id else "incoming"})
+                    primary.append(item)
+                    selected_ids.add(neighbor_id)
+                    used_budget += cost
+                    neighbor_count += 1
+            frontier = next_frontier - selected_ids
+            if len(primary) >= limit:
+                break
+        return primary, used_budget, neighbor_count
+
+    def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]:
+        return self.graph_query("add_edge", source=source_id, target=target_id, type=relationship)
 
     def context(self, context: str, **kwargs: Any) -> dict[str, Any]:
         limit, budget = kwargs.get("limit", 10), kwargs.get("token_budget")
@@ -282,14 +359,86 @@ class PolypackBackend(InMemoryBackend):
         for node_id, node in self.graph._nodes.items():
             item = self._node(node_id)
             if item.get("suppressed") or (context and (item["context"] != context if kwargs.get("strict_context") else item["context"] not in (None, context))): continue
-            score = len(terms & set(item["content"].lower().split())) / max(len(terms), 1)
-            score += item["activation"] * 0.25
-            if score: ranked.append((score, item))
+            lexical = len(terms & set(item["content"].lower().split())) / max(len(terms), 1)
+            score = lexical + item["activation"] * 0.25
+            if score: ranked.append((score, item, lexical))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
-        items = [{**item, "score": round(score, 6), "scoreComponents": {"lexical": round(score, 6)}} for score, item in ranked[:limit]]
+        budget = kwargs.get("token_budget")
+        if budget is not None and budget <= 0:
+            raise ValueError("token_budget must be greater than zero")
+        items = []
+        used = 0
+        primary_candidates = ranked
+        if kwargs.get("include_neighbors"):
+            lexical_matches = [entry for entry in ranked if entry[2] > 0]
+            primary_candidates = lexical_matches or ranked[:1]
+        for score, item, lexical in primary_candidates:
+            if len(items) >= limit:
+                break
+            if budget is not None and used + item["tokenEstimate"] > budget:
+                continue
+            item = {**item, "score": round(score, 6),
+                    "scoreComponents": {"lexical": round(lexical, 6),
+                                        "activation": round(item["activation"] * 0.25, 6)},
+                    "retrievalRole": "primary"}
+            items.append(item)
+            used += item["tokenEstimate"]
+        neighbor_count = 0
+        if kwargs.get("include_neighbors"):
+            items, used, neighbor_count = self._append_native_neighbors(
+                items, context=context, strict_context=kwargs.get("strict_context", False),
+                limit=limit, token_budget=budget, edge_types=kwargs.get("edge_types"),
+                depth=kwargs.get("depth", 1), used_budget=used)
         return {"items": items, "metadata": {"retrievalVersion": RETRIEVAL_VERSION,
-                "candidateCount": len(ranked), "matchedContext": sum(1 for _, x in ranked if x["context"] == context) if context else 0,
-                "excludedCount": max(0, len(self.graph._nodes) - len(ranked)), "fallbackAttempted": bool(context and any(x["context"] is None for _, x in ranked))}}
+                "candidateCount": len(ranked), "matchedContext": sum(1 for _, x, _ in ranked if x["context"] == context) if context else 0,
+                "excludedCount": max(0, len(self.graph._nodes) - len(ranked)),
+                "fallbackAttempted": bool(context and any(x["context"] is None for _, x, _ in ranked)),
+                "budgetRequested": budget, "budgetUsed": used,
+                "remainingBudget": None if budget is None else budget - used,
+                "neighborCount": neighbor_count,
+                "includeNeighbors": bool(kwargs.get("include_neighbors", False))}}
+
+    def _native_edges_for(self, memory_id: str) -> list[dict[str, Any]]:
+        return [edge for grouped in self.graph._edges.values() for edge in grouped.values()
+                if edge.get("source") == memory_id or edge.get("target") == memory_id]
+
+    def _append_native_neighbors(self, primary: list[dict[str, Any]], *, context: str | None,
+                                 strict_context: bool, limit: int, token_budget: int | None,
+                                 edge_types: list[str] | None, depth: int,
+                                 used_budget: int) -> tuple[list[dict[str, Any]], int, int]:
+        if not primary or depth <= 0:
+            return primary, used_budget, 0
+        selected_ids = {item["id"] for item in primary}
+        frontier = set(selected_ids)
+        neighbor_count = 0
+        allowed_types = set(edge_types) if edge_types else None
+        for distance in range(1, min(depth, 3) + 1):
+            next_frontier: set[str] = set()
+            for node_id in sorted(frontier):
+                for edge in self._native_edges_for(node_id):
+                    if allowed_types and edge.get("type") not in allowed_types:
+                        continue
+                    neighbor_id = edge["target"] if edge["source"] == node_id else edge["source"]
+                    if neighbor_id in selected_ids:
+                        continue
+                    next_frontier.add(neighbor_id)
+                    item = self._node(neighbor_id)
+                    if item["suppressed"] or (context and (item["context"] != context if strict_context else item["context"] not in (None, context))):
+                        continue
+                    cost = item["tokenEstimate"]
+                    if len(primary) >= limit or (token_budget is not None and used_budget + cost > token_budget):
+                        continue
+                    item.update(retrievalRole="neighbor", distance=distance,
+                                relationship={"edge": edge,
+                                              "direction": "outgoing" if edge["source"] == node_id else "incoming"})
+                    primary.append(item)
+                    selected_ids.add(neighbor_id)
+                    used_budget += cost
+                    neighbor_count += 1
+            frontier = next_frontier - selected_ids
+            if len(primary) >= limit:
+                break
+        return primary, used_budget, neighbor_count
 
     def context(self, context: str, **kwargs: Any) -> dict[str, Any]:
         budget = kwargs.get("token_budget")
@@ -324,6 +473,9 @@ class PolypackBackend(InMemoryBackend):
                      if edge.get("source") == node_id or edge.get("target") == node_id]
             return {"id": node_id, "neighbors": edges}
         raise ValueError(f"Unsupported graph operation: {operation}")
+
+    def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]:
+        return self.graph_query("add_edge", source=source_id, target=target_id, type=relationship)
 
     def stats(self) -> dict[str, Any]:
         return {"memories": self.graph.size, "edges": sum(len(edges) for edges in self.graph._edges.values())}

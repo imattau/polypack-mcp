@@ -72,17 +72,34 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
     @mcp.tool()
     def memory_store(content: str, memory_class: MemoryClass = "semantic", context: str | None = None,
                      confidence: float = 1.0, provenance: dict | None = None, metadata: dict | None = None) -> dict:
-        """Store durable adaptive memory with provenance and confidence."""
+        """Store durable project memory.
+
+        Use procedural for preferences, conventions, and decisions; semantic for
+        stable facts; episodic for events or task outcomes; and entity for named
+        people, projects, or objects. Use a stable context for project memory.
+        """
         with operation_lock.write():
             return service.store(content, memory_class, context, confidence, provenance, metadata)
 
     @mcp.tool()
     def memory_recall(query: str, context: str | None = None, limit: int = 10,
-                      strict_context: bool = False) -> dict:
-        """Hybrid semantic, graph, and activation-weighted retrieval."""
+                      strict_context: bool = False, include_neighbors: bool = False,
+                      edge_types: list[str] | None = None, depth: int = 1,
+                      token_budget: int | None = None) -> dict:
+        """Search memories by text, context, activation, and confidence.
+
+        Use this for a targeted question. Use memory_context to assemble working
+        context. Context is soft by default; use strict_context=true for isolation.
+        With include_neighbors=true, bounded graph neighbors are hydrated into the
+        result. Filter relationships with edge_types such as RESPONDS_TO.
+        """
+        if token_budget is not None and token_budget <= 0:
+            raise ValueError("token_budget must be greater than zero")
         with operation_lock.read():
             return backend.recall(query, context=context, strict_context=strict_context,
-                                  limit=max(1, min(limit, 100)))
+                                  limit=max(1, min(limit, 100)), include_neighbors=include_neighbors,
+                                  edge_types=edge_types, depth=max(0, min(depth, 3)),
+                                  token_budget=token_budget)
 
     @mcp.tool()
     def memory_context(context: str, limit: int = 10, token_budget: int | None = None,
@@ -100,7 +117,10 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
 
     @mcp.tool()
     def memory_feedback(memory_id: str, useful: bool, agent_id: str = "default") -> dict:
-        """Record whether a retrieved memory helped this agent session."""
+        """Record whether a retrieved memory helped this task.
+
+        Call this after using a recalled memory when it was useful or misleading.
+        """
         with operation_lock.write():
             return backend.feedback(memory_id, useful, agent_id=agent_id)
 
@@ -119,14 +139,30 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
     @mcp.tool()
     def memory_consolidate(source_ids: list[str], content: str, context: str | None = None,
                            memory_class: MemoryClass = "semantic", confidence: float = 1.0) -> dict:
-        """Consolidate episodic memories into a durable higher-level memory."""
+        """Consolidate source memories into one durable higher-level memory."""
         with operation_lock.write():
             return backend.consolidate(source_ids, content, context=context, memory_class=memory_class, confidence=confidence)
 
     @mcp.tool()
+    def memory_link(source_memory_id: str, target_memory_id: str,
+                    relationship: str = "RESPONDS_TO") -> dict:
+        """Connect two memories with an explicit graph relationship.
+
+        Use RESPONDS_TO when a new handoff, verification, or fix addresses an
+        earlier memory. Use memory_recall(include_neighbors=true) to retrieve
+        linked memories with relationship metadata.
+        """
+        with operation_lock.write():
+            return backend.link(source_memory_id, target_memory_id, relationship)
+
+    @mcp.tool()
     def graph_query(operation: str, id: str | None = None, source: str | None = None,
                     target: str | None = None, type: str | None = None) -> dict:
-        """Escape hatch for narrowly scoped graph operations (neighbors, add_edge, schema)."""
+        """Inspect graph neighbors/schema or perform an advanced edge operation.
+
+        Prefer memory_link for normal memory relationships. Supported operations
+        are neighbors, add_edge, and schema.
+        """
         args = {k: v for k, v in {"id": id, "source": source, "target": target, "type": type}.items() if v is not None}
         lock = operation_lock.write if operation == "add_edge" else operation_lock.read
         with lock():
@@ -151,6 +187,24 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
     def stats_resource() -> str:
         with operation_lock.read():
             return json.dumps(backend.stats(), indent=2)
+
+    @mcp.resource("polypack://help/workflow")
+    def workflow_help_resource() -> str:
+        return """Polypack MCP agent workflow
+
+1. Use memory_recall for a targeted question.
+2. Use memory_context when assembling working context for a task.
+3. Store durable discoveries, decisions, preferences, and outcomes with memory_store.
+4. Use procedural for conventions/preferences, semantic for facts, episodic for
+   events/outcomes, and entity for named objects.
+5. Link replies, verifications, and fixes with memory_link using RESPONDS_TO.
+6. Follow a handoff chain with memory_recall(include_neighbors=true,
+   edge_types=[RESPONDS_TO], depth=1 or 2).
+7. Call memory_feedback after a retrieved memory materially helps or misleads.
+
+Context is a soft filter unless strict_context=true. If recall is empty, retry
+with a broader query and strict_context=false before assuming the store is empty.
+"""
     return mcp
 
 def main() -> None:

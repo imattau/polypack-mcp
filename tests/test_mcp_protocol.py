@@ -16,7 +16,7 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == {
                 "memory_store", "memory_recall", "memory_context", "memory_feedback",
-                "memory_suppress", "memory_supersede", "memory_consolidate", "graph_query",
+                "memory_suppress", "memory_supersede", "memory_consolidate", "memory_link", "graph_query",
             }
             store_tool = next(tool for tool in tools.tools if tool.name == "memory_store")
             assert store_tool.inputSchema["properties"]["memory_class"]["enum"] == [
@@ -31,6 +31,8 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
             })
             recalled_payload = json.loads(recalled.content[0].text)
             assert recalled_payload["items"][0]["id"] == memory["id"]
+            help_resource = await session.read_resource("polypack://help/workflow")
+            assert "memory_link" in help_resource.contents[0].text
             stats = await session.read_resource("polypack://stats")
             assert '"memories": 1' in stats.contents[0].text
 

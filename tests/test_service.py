@@ -59,6 +59,39 @@ def test_context_fallback_and_feedback_suppression():
     assert global_memory["id"] not in {item["id"] for item in backend.context("release")["items"]}
 
 
+def test_recall_can_hydrate_bounded_relationship_neighbors():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    earlier = service.store("earlier handoff finding", context="cross-agent")
+    latest = service.store("latest applied fix", context="cross-agent")
+    backend.link(latest["id"], earlier["id"], "RESPONDS_TO")
+
+    result = backend.recall(
+        "latest applied fix", context="cross-agent", include_neighbors=True,
+        edge_types=["RESPONDS_TO"], depth=1, limit=5, token_budget=1000,
+    )
+
+    assert [item["id"] for item in result["items"]] == [latest["id"], earlier["id"]]
+    neighbor = result["items"][1]
+    assert neighbor["retrievalRole"] == "neighbor"
+    assert neighbor["distance"] == 1
+    assert neighbor["relationship"]["edge"]["type"] == "RESPONDS_TO"
+    assert result["metadata"]["neighborCount"] == 1
+
+
+def test_recall_neighbor_limit_and_budget_are_enforced():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    first = service.store("primary finding", context="x")
+    second = service.store("neighbor one", context="x")
+    third = service.store("neighbor two", context="x")
+    backend.link(first["id"], second["id"], "RELATED_TO")
+    backend.link(first["id"], third["id"], "RELATED_TO")
+
+    result = backend.recall("primary finding", context="x", include_neighbors=True,
+                            edge_types=["RELATED_TO"], limit=2, token_budget=10)
+    assert len(result["items"]) <= 2
+    assert result["metadata"]["budgetUsed"] <= 10
+
+
 def test_supersede_and_consolidation_edges_are_traversable():
     backend = InMemoryBackend(); service = MemoryService(backend)
     first = service.store("first fact", context="x")

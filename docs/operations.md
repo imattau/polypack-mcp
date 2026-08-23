@@ -73,6 +73,7 @@ Tools:
 - `memory_suppress`
 - `memory_supersede`
 - `memory_consolidate`
+- `memory_link`
 - `graph_query`
 
 Resources:
@@ -81,3 +82,20 @@ Resources:
 - `polypack://memory/active`
 - `polypack://graph/schema`
 - `polypack://stats`
+- `polypack://help/workflow`
+
+## Recommended agent workflow
+
+Use `memory_recall` for a targeted question and `memory_context` when assembling
+working context. Store durable decisions and outcomes with `memory_store`; use
+`procedural` for preferences and conventions, `semantic` for stable facts, and
+`episodic` for events or task outcomes.
+
+Link a response, verification, or fix to the memory it addresses with
+`memory_link(source_memory_id, target_memory_id, "RESPONDS_TO")`. To follow the
+chain, use `memory_recall` with `include_neighbors=true`,
+`edge_types=["RESPONDS_TO"]`, and a bounded `depth`.
+
+Context is soft by default. Use `strict_context=true` only when isolation is
+required. If recall returns nothing, broaden the query and retry without strict
+context before assuming the store is empty.

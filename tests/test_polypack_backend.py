@@ -39,6 +39,20 @@ def test_native_graph_and_feedback_contract():
     assert "activation_before" in feedback and "activation_after" in feedback
 
 
+def test_native_recall_hydrates_responds_to_neighbor():
+    backend = PolypackBackend(PolyGraph())
+    earlier = backend.store("earlier handoff finding", context="cross-agent")
+    latest = backend.store("latest applied fix", context="cross-agent")
+    backend.link(latest["id"], earlier["id"], "RESPONDS_TO")
+
+    result = backend.recall("latest applied fix", context="cross-agent",
+                            include_neighbors=True, edge_types=["RESPONDS_TO"],
+                            depth=1, limit=5, token_budget=1000)
+    assert [item["id"] for item in result["items"]] == [latest["id"], earlier["id"]]
+    assert result["items"][1]["retrievalRole"] == "neighbor"
+    assert result["items"][1]["relationship"]["edge"]["type"] == "RESPONDS_TO"
+
+
 def test_durable_mutations_are_checkpointed_before_backend_returns(tmp_path):
     store_path = tmp_path / "store"
     backend = PolypackBackend(PolyGraph.open(store_path))
