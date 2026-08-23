@@ -52,6 +52,9 @@ class MemoryBackend(Protocol):
     def graph_query(self, operation: str, **kwargs: Any) -> dict[str, Any]: ...
     def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]: ...
     def stats(self) -> dict[str, Any]: ...
+    def memory_thread(self, start_id: str, max_depth: int = 10) -> dict[str, Any]: ...
+    def link_batch(self, links: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+
 
 
 class InMemoryBackend:
@@ -223,6 +226,41 @@ class InMemoryBackend:
     def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]:
         return self.graph_query("add_edge", source=source_id, target=target_id, type=relationship)
 
+    def memory_thread(self, start_id: str, max_depth: int = 10) -> dict[str, Any]:
+        if start_id not in self.memories:
+            raise ValueError(f"Unknown memory: {start_id}")
+        visited = {start_id}
+        frontier = {start_id}
+        for _ in range(max_depth):
+            next_frontier = set()
+            for node_id in frontier:
+                for edge in self._edges_for(node_id):
+                    if edge["type"] == "RESPONDS_TO":
+                        neighbor_id = edge["target"] if edge["source"] == node_id else edge["source"]
+                        if neighbor_id not in visited:
+                            next_frontier.add(neighbor_id)
+                            visited.add(neighbor_id)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        items = []
+        for node_id in visited:
+            memory = self.memories.get(node_id)
+            if memory and not memory.suppressed and not memory.superseded_by:
+                items.append(memory.as_dict())
+        items.sort(key=lambda x: x["createdAt"])
+        return {"items": items}
+
+    def link_batch(self, links: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        results = []
+        for link_info in links:
+            source = link_info["source_memory_id"]
+            target = link_info["target_memory_id"]
+            relationship = link_info.get("relationship", "RESPONDS_TO")
+            res = self.link(source, target, relationship)
+            results.append(res)
+        return results
+
     def context(self, context: str, **kwargs: Any) -> dict[str, Any]:
         limit, budget = kwargs.get("limit", 10), kwargs.get("token_budget")
         if budget is not None and budget <= 0:
@@ -353,6 +391,7 @@ class PolypackBackend(InMemoryBackend):
         return {"id": memory_id, "content": content, "class": node.get("memoryClass", "semantic"),
                 "context": data.get("context"), "confidence": node.get("confidence", data.get("confidence", 1.0)),
                 "provenance": provenance, "activation": self.graph.get_activation(memory_id) or 0,
+                "createdAt": node.get("insertedAt", 0) / 1000.0,
                 "suppressed": bool(data.get("suppressed", False)) or bool(self.engine.inhibition_of(memory_id) > 0),
                 "tokenEstimate": estimate_tokens(content)}
 
@@ -563,6 +602,33 @@ class PolypackBackend(InMemoryBackend):
 
     def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]:
         return self.graph_query("add_edge", source=source_id, target=target_id, type=relationship)
+
+    def memory_thread(self, start_id: str, max_depth: int = 10) -> dict[str, Any]:
+        if start_id not in self.graph._nodes:
+            raise ValueError(f"Unknown memory: {start_id}")
+        visited = {start_id}
+        frontier = {start_id}
+        for _ in range(max_depth):
+            next_frontier = set()
+            for node_id in frontier:
+                for edge in self._native_edges_for(node_id):
+                    if edge.get("type") == "RESPONDS_TO":
+                        neighbor_id = edge["target"] if edge["source"] == node_id else edge["source"]
+                        if neighbor_id not in visited:
+                            next_frontier.add(neighbor_id)
+                            visited.add(neighbor_id)
+            if not next_frontier:
+                break
+            frontier = next_frontier
+        items = []
+        for node_id in visited:
+            node = self.graph._nodes.get(node_id)
+            if node:
+                item = self._node(node_id)
+                if not item.get("suppressed"):
+                    items.append(item)
+        items.sort(key=lambda x: self.graph._nodes[x["id"]].get("insertedAt", 0))
+        return {"items": items}
 
     def stats(self) -> dict[str, Any]:
         return {"memories": self.graph.size, "edges": sum(len(edges) for edges in self.graph._edges.values())}

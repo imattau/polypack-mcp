@@ -153,3 +153,53 @@ def test_supersede_and_consolidation_edges_are_traversable():
     assert {"SUPERSEDES", "SUPERSEDED_BY", "CONSOLIDATED_FROM"} <= set(schema["edges"])
     neighbors = backend.graph_query("neighbors", id=combined["id"])["neighbors"]
     assert len(neighbors) == 2
+
+
+def test_memory_thread():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    m1 = service.store("First message", context="thread-test")
+    m2 = service.store("Second message (reply to first)", context="thread-test")
+    m3 = service.store("Third message (reply to second)", context="thread-test")
+
+    backend.link(m2["id"], m1["id"], "RESPONDS_TO")
+    backend.link(m3["id"], m2["id"], "RESPONDS_TO")
+
+    # Test walking from middle (m2)
+    thread = backend.memory_thread(m2["id"])
+    assert len(thread["items"]) == 3
+    # Check chronological order (m1, m2, m3)
+    assert [item["id"] for item in thread["items"]] == [m1["id"], m2["id"], m3["id"]]
+
+    # Test max_depth limits traversal
+    thread_shallow = backend.memory_thread(m3["id"], max_depth=1)
+    assert len(thread_shallow["items"]) == 2
+    assert [item["id"] for item in thread_shallow["items"]] == [m2["id"], m3["id"]]
+
+
+def test_batch_operations():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    # Batch store
+    memories_to_store = [
+        {"content": "Batch memory 1", "context": "batch", "memory_class": "semantic"},
+        {"content": "Batch memory 2", "context": "batch", "memory_class": "episodic"},
+        {"content": "Batch memory 3", "context": "batch", "memory_class": "procedural"}
+    ]
+    stored = service.store_batch(memories_to_store)
+    assert len(stored) == 3
+    assert stored[0]["content"] == "Batch memory 1"
+    assert stored[1]["class"] == "episodic"
+    assert stored[2]["class"] == "procedural"
+
+    # Batch link
+    links_to_create = [
+        {"source_memory_id": stored[1]["id"], "target_memory_id": stored[0]["id"], "relationship": "RESPONDS_TO"},
+        {"source_memory_id": stored[2]["id"], "target_memory_id": stored[1]["id"]}  # Defaults to RESPONDS_TO
+    ]
+    linked = backend.link_batch(links_to_create)
+    assert len(linked) == 2
+    assert linked[0]["source"] == stored[1]["id"]
+    assert linked[0]["target"] == stored[0]["id"]
+    assert linked[0]["type"] == "RESPONDS_TO"
+    assert linked[1]["source"] == stored[2]["id"]
+    assert linked[1]["target"] == stored[1]["id"]
+    assert linked[1]["type"] == "RESPONDS_TO"

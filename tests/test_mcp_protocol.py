@@ -16,7 +16,8 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
             tools = await session.list_tools()
             assert {tool.name for tool in tools.tools} == {
                 "memory_store", "memory_recall", "memory_context", "memory_feedback",
-                "memory_suppress", "memory_supersede", "memory_consolidate", "memory_link", "graph_query",
+                "memory_suppress", "memory_supersede", "memory_consolidate", "memory_link",
+                "memory_thread", "memory_store_batch", "memory_link_batch", "graph_query",
             }
             store_tool = next(tool for tool in tools.tools if tool.name == "memory_store")
             assert store_tool.inputSchema["properties"]["memory_class"]["enum"] == [

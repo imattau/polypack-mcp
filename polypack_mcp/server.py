@@ -111,6 +111,18 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
                                   token_budget=token_budget)
 
     @mcp.tool()
+    def memory_thread(start_id: str, max_depth: int = 10) -> dict:
+        """Walk the RESPONDS_TO chain from a starting memory ID and return the thread.
+
+        Retrieves connected memories in both directions along RESPONDS_TO edges,
+        returning them sorted chronologically.
+        """
+        if max_depth <= 0:
+            raise ValueError("max_depth must be greater than zero")
+        with operation_lock.read():
+            return backend.memory_thread(start_id, max_depth=min(max_depth, 100))
+
+    @mcp.tool()
     def memory_context(context: str, limit: int = 10, token_budget: int | None = None,
                        strict_context: bool = False) -> dict:
         """Return a working-memory set selected by activation and estimated-token budget.
@@ -163,6 +175,26 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
         """
         with operation_lock.write():
             return backend.link(source_memory_id, target_memory_id, relationship)
+
+    @mcp.tool()
+    def memory_store_batch(memories: list[dict]) -> list[dict]:
+        """Store multiple durable project memories in a single batch.
+
+        Each item in the list should be a dict with 'content' and optional
+        'memory_class', 'context', 'confidence', 'provenance', and 'metadata' keys.
+        """
+        with operation_lock.write():
+            return service.store_batch(memories)
+
+    @mcp.tool()
+    def memory_link_batch(links: list[dict]) -> list[dict]:
+        """Connect multiple pairs of memories with explicit graph relationships in a single batch.
+
+        Each item in the list should be a dict with 'source_memory_id', 'target_memory_id',
+        and optional 'relationship' (defaults to 'RESPONDS_TO') keys.
+        """
+        with operation_lock.write():
+            return backend.link_batch(links)
 
     @mcp.tool()
     def graph_query(operation: str, id: str | None = None, source: str | None = None,
