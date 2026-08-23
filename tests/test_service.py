@@ -92,6 +92,24 @@ def test_recall_neighbor_limit_and_budget_are_enforced():
     assert result["metadata"]["budgetUsed"] <= 10
 
 
+def test_recall_reserves_capacity_for_neighbors_when_primary_matches_fill_limit():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    linked = service.store("process lesson RESPONDS_TO edge convention", context="cross-agent")
+    neighbor = service.store("linked response memory", context="cross-agent")
+    service.store("another process lesson RESPONDS_TO detail", context="cross-agent")
+    backend.link(linked["id"], neighbor["id"], "RESPONDS_TO")
+
+    result = backend.recall(
+        "process lesson RESPONDS_TO edge convention", context="cross-agent",
+        include_neighbors=True, edge_types=["RESPONDS_TO"], depth=1,
+        limit=3, token_budget=2000,
+    )
+
+    assert len(result["items"]) == 3
+    assert result["metadata"]["neighborCount"] == 1
+    assert any(item["retrievalRole"] == "neighbor" for item in result["items"])
+
+
 def test_supersede_and_consolidation_edges_are_traversable():
     backend = InMemoryBackend(); service = MemoryService(backend)
     first = service.store("first fact", context="x")

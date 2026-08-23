@@ -121,11 +121,15 @@ class InMemoryBackend:
         primary = []
         used = 0
         primary_candidates = ranked
+        primary_limit = limit
         if kwargs.get("include_neighbors"):
             lexical_matches = [item for item in ranked if item["scoreComponents"]["lexical"] > 0]
             primary_candidates = lexical_matches or ranked[:1]
+            # Keep room for at least one hydrated neighbor. If no neighbor is
+            # found, the unused slot is filled with another primary below.
+            primary_limit = max(1, limit - 1)
         for item in primary_candidates:
-            if len(primary) >= limit:
+            if len(primary) >= primary_limit:
                 break
             if budget is not None and used + item["tokenEstimate"] > budget:
                 continue
@@ -139,6 +143,19 @@ class InMemoryBackend:
                 primary, context=context, strict_context=kwargs.get("strict_context", False),
                 limit=limit, token_budget=budget, edge_types=kwargs.get("edge_types"),
                 depth=kwargs.get("depth", 1), used_budget=used)
+            if len(primary) < limit:
+                selected_ids = {item["id"] for item in primary}
+                for item in primary_candidates:
+                    if len(primary) >= limit:
+                        break
+                    if item["id"] in selected_ids:
+                        continue
+                    if budget is not None and used + item["tokenEstimate"] > budget:
+                        continue
+                    item["retrievalRole"] = "primary"
+                    primary.append(item)
+                    selected_ids.add(item["id"])
+                    used += item["tokenEstimate"]
         diagnostics.update({"matchedContext": sum(1 for x in ranked if x["context"] == context) if context else 0,
                             "fallbackAttempted": bool(context and any(x["context"] is None for x in ranked)),
                             "budgetRequested": budget, "budgetUsed": used,
@@ -369,11 +386,15 @@ class PolypackBackend(InMemoryBackend):
         items = []
         used = 0
         primary_candidates = ranked
+        primary_limit = limit
         if kwargs.get("include_neighbors"):
             lexical_matches = [entry for entry in ranked if entry[2] > 0]
             primary_candidates = lexical_matches or ranked[:1]
+            # Keep room for at least one hydrated neighbor. If no neighbor is
+            # found, the unused slot is filled with another primary below.
+            primary_limit = max(1, limit - 1)
         for score, item, lexical in primary_candidates:
-            if len(items) >= limit:
+            if len(items) >= primary_limit:
                 break
             if budget is not None and used + item["tokenEstimate"] > budget:
                 continue
@@ -389,6 +410,22 @@ class PolypackBackend(InMemoryBackend):
                 items, context=context, strict_context=kwargs.get("strict_context", False),
                 limit=limit, token_budget=budget, edge_types=kwargs.get("edge_types"),
                 depth=kwargs.get("depth", 1), used_budget=used)
+            if len(items) < limit:
+                selected_ids = {item["id"] for item in items}
+                for score, item, lexical in primary_candidates:
+                    if len(items) >= limit:
+                        break
+                    if item["id"] in selected_ids:
+                        continue
+                    if budget is not None and used + item["tokenEstimate"] > budget:
+                        continue
+                    item = {**item, "score": round(score, 6),
+                            "scoreComponents": {"lexical": round(lexical, 6),
+                                                "activation": round(item["activation"] * 0.25, 6)},
+                            "retrievalRole": "primary"}
+                    items.append(item)
+                    selected_ids.add(item["id"])
+                    used += item["tokenEstimate"]
         return {"items": items, "metadata": {"retrievalVersion": RETRIEVAL_VERSION,
                 "candidateCount": len(ranked), "matchedContext": sum(1 for _, x, _ in ranked if x["context"] == context) if context else 0,
                 "excludedCount": max(0, len(self.graph._nodes) - len(ranked)),

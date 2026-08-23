@@ -53,6 +53,24 @@ def test_native_recall_hydrates_responds_to_neighbor():
     assert result["items"][1]["relationship"]["edge"]["type"] == "RESPONDS_TO"
 
 
+def test_native_recall_reserves_capacity_for_neighbors_when_primary_matches_fill_limit():
+    backend = PolypackBackend(PolyGraph())
+    linked = backend.store("process lesson RESPONDS_TO edge convention", context="cross-agent")
+    neighbor = backend.store("linked response memory", context="cross-agent")
+    backend.store("another process lesson RESPONDS_TO detail", context="cross-agent")
+    backend.link(linked["id"], neighbor["id"], "RESPONDS_TO")
+
+    result = backend.recall(
+        "process lesson RESPONDS_TO edge convention", context="cross-agent",
+        include_neighbors=True, edge_types=["RESPONDS_TO"], depth=1,
+        limit=3, token_budget=2000,
+    )
+
+    assert len(result["items"]) == 3
+    assert result["metadata"]["neighborCount"] == 1
+    assert any(item["retrievalRole"] == "neighbor" for item in result["items"])
+
+
 def test_durable_mutations_are_checkpointed_before_backend_returns(tmp_path):
     store_path = tmp_path / "store"
     backend = PolypackBackend(PolyGraph.open(store_path))
