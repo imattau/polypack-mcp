@@ -1,4 +1,11 @@
-# polypack-mcp
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-lockup-dark.svg">
+    <img src="docs/assets/logo-lockup.svg" alt="polypack-mcp" height="64">
+  </picture>
+</p>
+
+<p align="center">Persistent, adaptive memory for MCP clients.</p>
 
 <!-- mcp-name: io.github.imattau/polypack-mcp -->
 

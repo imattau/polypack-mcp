@@ -7,6 +7,18 @@
     "url": "https://github.com/imattau/polypack-mcp",
     "source": "github"
   },
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/imattau/polypack-mcp/master/docs/assets/logo-mark.svg",
+      "mimeType": "image/svg+xml",
+      "theme": "light"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/imattau/polypack-mcp/master/docs/assets/logo-mark-dark.svg",
+      "mimeType": "image/svg+xml",
+      "theme": "dark"
+    }
+  ],
   "version": "0.1.14",
   "packages": [
     {
