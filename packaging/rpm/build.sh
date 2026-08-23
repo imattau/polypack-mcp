@@ -16,7 +16,7 @@ mkdir -p "$topdir"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} \
 
 python3 -m pip install --no-deps --target "$stage/usr/lib/polypack-mcp" .
 python3 -m pip install --target "$stage/usr/lib/polypack-mcp" \
-    'polypack-db>=3.2.0' 'mcp>=1.9,<1.10' 'anyio>=4.5,<4.10'
+    'polypack-db>=3.3.1' 'mcp>=1.9,<1.10' 'anyio>=4.5,<4.10'
 
 cat > "$stage/usr/bin/polypack-mcp" <<'EOF'
 #!/bin/sh

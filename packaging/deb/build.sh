@@ -10,7 +10,7 @@ architecture="$(dpkg --print-architecture)"
 stage="$root/polypack-mcp_${version}_${architecture}"
 mkdir -p "$stage/DEBIAN" "$stage/usr/lib/polypack-mcp" "$stage/usr/bin" "$stage/lib/systemd/system" "$stage/etc/default"
 python3 -m pip install --no-deps --target "$stage/usr/lib/polypack-mcp" .
-python3 -m pip install --target "$stage/usr/lib/polypack-mcp" 'polypack-db>=3.2.0' 'mcp>=1.9,<1.10' 'anyio>=4.5,<4.10'
+python3 -m pip install --target "$stage/usr/lib/polypack-mcp" 'polypack-db>=3.3.1' 'mcp>=1.9,<1.10' 'anyio>=4.5,<4.10'
 
 cat > "$stage/usr/bin/polypack-mcp" <<'EOF'
 #!/bin/sh
