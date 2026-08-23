@@ -6,9 +6,10 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 CLASSES = {"episodic", "semantic", "procedural", "entity"}
+MemoryClass = Literal["entity", "episodic", "procedural", "semantic"]
 RETRIEVAL_VERSION = "2026-08-22"
 
 
@@ -201,6 +202,15 @@ class PolypackBackend(InMemoryBackend):
         self.graph = graph or PolyGraph()
         self.engine = ActivationEngine(self.graph)
 
+    def _checkpoint(self) -> None:
+        """Persist a mutation when the graph has an attached durable store."""
+        if getattr(self.graph, "_store", None) is not None:
+            self.graph.checkpoint()
+
+    def close_store(self) -> None:
+        """Flush and close the attached Polypack store, if any."""
+        self.graph.close_store()
+
     def store(self, content: str, **kwargs: Any) -> dict[str, Any]:
         now = int(time.time() * 1000); memory_id = kwargs.get("id", str(uuid.uuid4()))
         node = {"id": memory_id, "type": "memory", "memoryClass": kwargs.get("memory_class", "semantic"),
@@ -209,6 +219,7 @@ class PolypackBackend(InMemoryBackend):
                 "insertedAt": now, "updatedAt": now}
         self.graph.add_node(node); self.graph.reinforce_node(memory_id, kwargs.get("activation", 0.1), "memory_store",
                                                              context=kwargs.get("context"))
+        self._checkpoint()
         return self._node(memory_id)
 
     def _node(self, memory_id: str) -> dict[str, Any]:
@@ -231,6 +242,7 @@ class PolypackBackend(InMemoryBackend):
         weights_before = self.engine.get_weights()
         self.engine.record_feedback(memory_id, useful)
         self.graph.reinforce_node(memory_id, 0.1 if useful else -0.1, "mcp_feedback")
+        self._checkpoint()
         after = self.graph.get_activation(memory_id) or 0
         weights_after = self.engine.get_weights()
         result = {"memory_id": memory_id, "useful": useful, "activation_before": before,
@@ -242,10 +254,12 @@ class PolypackBackend(InMemoryBackend):
     def suppress(self, memory_id: str, **kwargs: Any) -> dict[str, Any]:
         self.graph.suppress_node(memory_id, kwargs.get("amount", 0.5), "mcp_suppress")
         self.graph._nodes[memory_id].setdefault("data", {})["suppressed"] = True
+        self._checkpoint()
         return {"id": memory_id, "activation": self.graph.get_activation(memory_id)}
 
     def supersede(self, new_id: str, old_id: str) -> dict[str, Any]:
         self.graph.supersede(new_id, old_id)
+        self._checkpoint()
         return {"superseded": old_id, "by": new_id}
 
     def consolidate(self, source_ids: list[str], content: str, **kwargs: Any) -> dict[str, Any]:
@@ -256,6 +270,7 @@ class PolypackBackend(InMemoryBackend):
                          "confidence": kwargs.get("confidence", 1.0), "derivedFrom": source_ids},
                 "insertedAt": now, "updatedAt": now}
         self.graph.consolidate(node, source_ids)
+        self._checkpoint()
         return self._node(memory_id)
 
     def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
@@ -301,6 +316,7 @@ class PolypackBackend(InMemoryBackend):
         if operation == "schema": return {"nodes": ["memory"], "edges": sorted({e.get("type") for e in self.graph._edges.values() for e in e.values()})}
         if operation == "add_edge":
             self.graph.add_edge(kwargs["source"], kwargs["type"], kwargs["target"])
+            self._checkpoint()
             return {"source": kwargs["source"], "type": kwargs["type"], "target": kwargs["target"]}
         if operation == "neighbors":
             node_id = kwargs["id"]

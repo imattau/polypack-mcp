@@ -37,3 +37,16 @@ def test_native_graph_and_feedback_contract():
     feedback = backend.feedback(new["id"], False)
     assert feedback["memory_id"] == new["id"]
     assert "activation_before" in feedback and "activation_after" in feedback
+
+
+def test_durable_mutations_are_checkpointed_before_backend_returns(tmp_path):
+    store_path = tmp_path / "store"
+    backend = PolypackBackend(PolyGraph.open(store_path))
+    memory = backend.store("durable memory", context="project")
+    backend.close_store()
+
+    reopened = PolypackBackend(PolyGraph.open(store_path))
+    try:
+        assert reopened.recall("durable memory", context="project")["items"][0]["id"] == memory["id"]
+    finally:
+        reopened.close_store()

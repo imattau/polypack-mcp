@@ -2,8 +2,15 @@
 
 import argparse
 import json
+import signal
 from contextlib import contextmanager
 from threading import Condition, RLock
+
+from .backend import MemoryClass
+
+
+def _raise_keyboard_interrupt(signum, frame):
+    raise KeyboardInterrupt
 
 
 class ReadWriteLock:
@@ -63,7 +70,7 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
     mcp = FastMCP("Polypack", host=host, port=port)
 
     @mcp.tool()
-    def memory_store(content: str, memory_class: str = "semantic", context: str | None = None,
+    def memory_store(content: str, memory_class: MemoryClass = "semantic", context: str | None = None,
                      confidence: float = 1.0, provenance: dict | None = None, metadata: dict | None = None) -> dict:
         """Store durable adaptive memory with provenance and confidence."""
         with operation_lock.write():
@@ -111,7 +118,7 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
 
     @mcp.tool()
     def memory_consolidate(source_ids: list[str], content: str, context: str | None = None,
-                           memory_class: str = "semantic", confidence: float = 1.0) -> dict:
+                           memory_class: MemoryClass = "semantic", confidence: float = 1.0) -> dict:
         """Consolidate episodic memories into a durable higher-level memory."""
         with operation_lock.write():
             return backend.consolidate(source_ids, content, context=context, memory_class=memory_class, confidence=confidence)
@@ -166,7 +173,16 @@ def main() -> None:
         from .backend import PolypackBackend
         from polypack import PolyGraph
         backend = PolypackBackend(PolyGraph.open(args.store))
-    create_server(backend, host=args.host, port=args.port).run(transport=args.transport)
+    server = create_server(backend, host=args.host, port=args.port)
+    try:
+        if backend is not None:
+            # Convert SIGTERM into normal Python shutdown so the finally block
+            # can flush mutations before the process exits.
+            signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+        server.run(transport=args.transport)
+    finally:
+        if backend is not None:
+            backend.close_store()
 
 
 if __name__ == "__main__":

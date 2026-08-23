@@ -10,6 +10,17 @@ def test_store_recall_feedback_and_supersede():
     backend.supersede(new["id"], old["id"])
     assert all(item["id"] != old["id"] for item in backend.recall("graph queries", context="polypack")["items"])
 
+
+def test_invalid_memory_class_error_names_parameter_and_allowed_values():
+    service = MemoryService(InMemoryBackend())
+    try:
+        service.store("a preference", memory_class="preference")
+    except ValueError as error:
+        message = str(error)
+    else:
+        raise AssertionError("invalid memory class should be rejected")
+    assert message == "memory_class must be one of: entity, episodic, procedural, semantic"
+
 def test_context_budget_and_graph():
     backend = InMemoryBackend(); service = MemoryService(backend)
     a = service.store("one two", context="coding"); b = service.store("three four five", context="coding")

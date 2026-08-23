@@ -18,6 +18,10 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
                 "memory_store", "memory_recall", "memory_context", "memory_feedback",
                 "memory_suppress", "memory_supersede", "memory_consolidate", "graph_query",
             }
+            store_tool = next(tool for tool in tools.tools if tool.name == "memory_store")
+            assert store_tool.inputSchema["properties"]["memory_class"]["enum"] == [
+                "entity", "episodic", "procedural", "semantic"
+            ]
             stored = await session.call_tool("memory_store", {
                 "content": "Polypack MCP protocol works", "context": "test"
             })

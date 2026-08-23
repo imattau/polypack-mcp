@@ -95,6 +95,13 @@ The server exposes eight focused tools: `memory_store`, `memory_recall`,
 `memory_consolidate`, and `graph_query`. It also publishes context, active-memory,
 schema, and stats resources under `polypack://`.
 
+Memory classes are `entity`, `episodic`, `procedural`, and `semantic`. Store
+project or user preferences as `procedural` memories; `preference` is not a
+separate memory class.
+
+When using a durable Polypack store, mutating operations checkpoint immediately
+and the server flushes the store during shutdown.
+
 Retrieval tools return `{items, metadata}`. Metadata includes candidate and
 excluded counts, context matches, score components, fallback behavior, the
 retrieval version, and selection statistics. `memory_context` uses estimated
