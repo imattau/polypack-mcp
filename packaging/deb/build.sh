@@ -26,7 +26,7 @@ Version: $version
 Section: utils
 Priority: optional
 Architecture: $architecture
-Depends: python3, adduser
+Depends: python3 (>= 3.12), adduser
 Suggests: systemd
 Maintainer: Polypack contributors
 Description: Persistent adaptive memory MCP server
@@ -65,7 +65,7 @@ if ! getent passwd polypack >/dev/null; then
     adduser --system --group --home /var/lib/polypack-mcp --no-create-home polypack
 fi
 mkdir -p /var/lib/polypack-mcp
-chown polypack:polypack /var/lib/polypack-mcp
+chown -R polypack:polypack /var/lib/polypack-mcp
 chmod 0750 /var/lib/polypack-mcp
 
 if command -v systemctl >/dev/null && systemctl daemon-reload >/dev/null 2>&1; then

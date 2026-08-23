@@ -75,7 +75,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # The Debian wrapper runs /usr/bin/python3 on ubuntu-latest (3.12).
+          # Build native dependencies for that same interpreter.
+          python-version: "3.12"
 
       - name: Build Debian package
         run: packaging/deb/build.sh "${GITHUB_REF_NAME#v}" dist
