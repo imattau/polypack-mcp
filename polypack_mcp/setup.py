@@ -45,7 +45,7 @@ def install_user_service(store: str, port: int = 8765, start: bool = True) -> Pa
 
 
 def print_client_config(port: int = 8765) -> None:
-    url = f"http://127.0.0.1:{port}/mcp"
+    url = f"http://127.0.0.1:{port}/mcp/"
     print("Shared Polypack MCP endpoint:")
     print(url)
     print("\nCodex (~/.codex/config.toml):")

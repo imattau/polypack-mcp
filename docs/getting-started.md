@@ -23,7 +23,7 @@ polypack-mcp setup --store ~/.local/share/polypack-mcp
 The default endpoint is:
 
 ```text
-http://127.0.0.1:8765/mcp
+http://127.0.0.1:8765/mcp/
 ```
 
 The setup command creates a `systemd --user` service, enables it, starts it,
@@ -41,7 +41,7 @@ sudo apt install ./polypack-mcp_<version>_amd64.deb
 
 The Debian package installs and starts a system service under the dedicated
 `polypack` user. Its default store is `/var/lib/polypack-mcp` and its endpoint
-is `http://127.0.0.1:8765/mcp`.
+is `http://127.0.0.1:8765/mcp/`.
 
 The packaged native dependencies target Python 3.12, so the package declares
 `python3 (>= 3.12)`.
@@ -54,7 +54,7 @@ Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.polypack]
-url = "http://127.0.0.1:8765/mcp"
+url = "http://127.0.0.1:8765/mcp/"
 startup_timeout_sec = 30
 ```
 
@@ -64,7 +64,7 @@ Claude Desktop:
 {
   "mcpServers": {
     "polypack": {
-      "url": "http://127.0.0.1:8765/mcp"
+      "url": "http://127.0.0.1:8765/mcp/"
     }
   }
 }

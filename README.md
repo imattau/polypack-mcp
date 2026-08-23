@@ -19,7 +19,7 @@ user service:
 polypack-mcp setup --store ~/.local/share/polypack-mcp
 ```
 
-This starts a Streamable HTTP server at `http://127.0.0.1:8765/mcp`, restarts it after a
+This starts a stateless Streamable HTTP server at `http://127.0.0.1:8765/mcp/`, restarts it after a
 failure, and prints client configuration snippets. The setup command uses
 `systemd --user`; on systems without systemd, start the server directly:
 
@@ -35,7 +35,7 @@ Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.polypack]
-  url = "http://127.0.0.1:8765/mcp"
+  url = "http://127.0.0.1:8765/mcp/"
 ```
 
 Claude Desktop:
@@ -43,7 +43,7 @@ Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "polypack": { "url": "http://127.0.0.1:8765/mcp" }
+    "polypack": { "url": "http://127.0.0.1:8765/mcp/" }
   }
 }
 ```
@@ -59,7 +59,7 @@ sudo apt install ./polypack-mcp_<version>_amd64.deb
 ```
 
 After installation, point Claude and Codex at
-`http://127.0.0.1:8765/mcp`. The default port can be changed in
+`http://127.0.0.1:8765/mcp/`. The default port can be changed in
 `/etc/default/polypack-mcp`, followed by a service restart. The service can be
 managed with:
 

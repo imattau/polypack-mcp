@@ -67,7 +67,10 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
     # graph transaction boundary is process-local: reads may overlap, but
     # mutations must exclude both reads and other mutations.
     operation_lock = ReadWriteLock()
-    mcp = FastMCP("Polypack", host=host, port=port)
+    # This server has no per-client server-side state or server-initiated
+    # requests. Stateless HTTP avoids stale Mcp-Session-Id failures when
+    # multiple clients connect, reconnect, or join an existing endpoint.
+    mcp = FastMCP("Polypack", host=host, port=port, stateless_http=True)
 
     @mcp.tool()
     def memory_store(content: str, memory_class: MemoryClass = "semantic", context: str | None = None,

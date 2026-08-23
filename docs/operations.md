@@ -51,11 +51,12 @@ Then restart the service and update each client URL:
 sudo systemctl restart polypack-mcp
 ```
 
-The endpoint becomes `http://127.0.0.1:9001/mcp`.
+The endpoint becomes `http://127.0.0.1:9001/mcp/`.
 
 ## Concurrency
 
-One shared Streamable HTTP process supports multiple clients. Reads may run concurrently.
+One shared stateless Streamable HTTP process supports multiple clients without
+per-client MCP session state. Reads may run concurrently.
 Writes are exclusive and are serialized with respect to reads and other
 writes. This protects Polypack's in-process graph transaction boundary.
 
