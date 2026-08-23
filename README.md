@@ -71,6 +71,18 @@ sudo systemctl restart polypack-mcp
 The PyPI installation remains user-managed and uses `polypack-mcp setup` to
 create a per-user service instead.
 
+### RPM package
+
+RPM-based distributions can install the matching `.rpm` asset from the
+[GitHub release](https://github.com/imattau/polypack-mcp/releases):
+
+```sh
+sudo dnf install ./polypack-mcp-<version>-1.x86_64.rpm
+```
+
+The RPM package provides the same systemd service, store location, localhost
+SSE endpoint, and Python 3.12 requirement as the Debian package.
+
 ## Run manually
 
 ```sh
@@ -113,3 +125,9 @@ pytest
 
 The test suite includes an MCP client/server protocol smoke test covering tool
 discovery, memory storage, recall, and resource reads.
+
+## Documentation
+
+- [Getting started](docs/getting-started.md)
+- [Operations and configuration](docs/operations.md)
+- [Troubleshooting](docs/troubleshooting.md)
