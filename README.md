@@ -1,5 +1,7 @@
 # polypack-mcp
 
+<!-- mcp-name: io.github.imattau/polypack-mcp -->
+
 An MCP server that exposes Polypack as persistent adaptive memory. MCP-specific
 tools live here; the database remains an independent dependency.
 

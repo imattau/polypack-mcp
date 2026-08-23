@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.imattau/polypack-mcp",
+  "title": "Polypack Memory",
+  "description": "MCP server exposing Polypack as persistent adaptive memory",
+  "repository": {
+    "url": "https://github.com/imattau/polypack-mcp",
+    "source": "github"
+  },
+  "version": "0.1.14",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "polypack-mcp",
+      "version": "0.1.14",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
