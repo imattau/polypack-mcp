@@ -114,6 +114,12 @@ class InMemoryBackend:
 
     def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         context, limit = kwargs.get("context"), kwargs.get("limit", 10)
+        include_neighbors = bool(kwargs.get("include_neighbors"))
+        neighbor_limit = kwargs.get("neighbor_limit", 1)
+        if neighbor_limit is None:
+            neighbor_limit = 1
+        if neighbor_limit < 0:
+            raise ValueError("neighbor_limit must be zero or greater")
         ranked, diagnostics = self._rank(query, context, kwargs.get("strict_context", False))
         budget = kwargs.get("token_budget")
         if budget is not None and budget <= 0:
@@ -122,12 +128,12 @@ class InMemoryBackend:
         used = 0
         primary_candidates = ranked
         primary_limit = limit
-        if kwargs.get("include_neighbors"):
+        if include_neighbors:
             lexical_matches = [item for item in ranked if item["scoreComponents"]["lexical"] > 0]
             primary_candidates = lexical_matches or ranked[:1]
             # Keep room for at least one hydrated neighbor. If no neighbor is
             # found, the unused slot is filled with another primary below.
-            primary_limit = max(1, limit - 1)
+            primary_limit = limit if neighbor_limit == 0 else max(1, limit - neighbor_limit)
         for item in primary_candidates:
             if len(primary) >= primary_limit:
                 break
@@ -138,11 +144,12 @@ class InMemoryBackend:
             used += item["tokenEstimate"]
 
         neighbor_count = 0
-        if kwargs.get("include_neighbors"):
-            primary, used, neighbor_count = self._append_neighbors(
+        more_neighbors = False
+        if include_neighbors:
+            primary, used, neighbor_count, more_neighbors = self._append_neighbors(
                 primary, context=context, strict_context=kwargs.get("strict_context", False),
                 limit=limit, token_budget=budget, edge_types=kwargs.get("edge_types"),
-                depth=kwargs.get("depth", 1), used_budget=used)
+                depth=kwargs.get("depth", 1), neighbor_limit=neighbor_limit, used_budget=used)
             if len(primary) < limit:
                 selected_ids = {item["id"] for item in primary}
                 for item in primary_candidates:
@@ -161,7 +168,9 @@ class InMemoryBackend:
                             "budgetRequested": budget, "budgetUsed": used,
                             "remainingBudget": None if budget is None else budget - used,
                             "neighborCount": neighbor_count,
-                            "includeNeighbors": bool(kwargs.get("include_neighbors", False))})
+                            "includeNeighbors": include_neighbors,
+                            "neighborLimit": neighbor_limit if include_neighbors else 0,
+                            "moreNeighborsAvailable": more_neighbors})
         return self._response(primary, diagnostics)
 
     def _edges_for(self, memory_id: str) -> list[dict[str, Any]]:
@@ -170,13 +179,14 @@ class InMemoryBackend:
 
     def _append_neighbors(self, primary: list[dict[str, Any]], *, context: str | None,
                           strict_context: bool, limit: int, token_budget: int | None,
-                          edge_types: list[str] | None, depth: int,
-                          used_budget: int) -> tuple[list[dict[str, Any]], int, int]:
+                          edge_types: list[str] | None, depth: int, neighbor_limit: int,
+                          used_budget: int) -> tuple[list[dict[str, Any]], int, int, bool]:
         if not primary or depth <= 0:
-            return primary, used_budget, 0
+            return primary, used_budget, 0, False
         selected_ids = {item["id"] for item in primary}
         frontier = set(selected_ids)
         neighbor_count = 0
+        more_neighbors = False
         for distance in range(1, min(depth, 3) + 1):
             next_frontier: set[str] = set()
             for node_id in sorted(frontier):
@@ -194,7 +204,9 @@ class InMemoryBackend:
                         continue
                     item = memory.as_dict()
                     cost = item["tokenEstimate"]
-                    if len(primary) >= limit or (token_budget is not None and used_budget + cost > token_budget):
+                    if (neighbor_count >= neighbor_limit or len(primary) >= limit or
+                            (token_budget is not None and used_budget + cost > token_budget)):
+                        more_neighbors = True
                         continue
                     item.update(retrievalRole="neighbor", distance=distance,
                                 relationship={"edge": edge,
@@ -206,7 +218,7 @@ class InMemoryBackend:
             frontier = next_frontier - selected_ids
             if len(primary) >= limit:
                 break
-        return primary, used_budget, neighbor_count
+        return primary, used_budget, neighbor_count, more_neighbors
 
     def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]:
         return self.graph_query("add_edge", source=source_id, target=target_id, type=relationship)
@@ -278,11 +290,24 @@ class InMemoryBackend:
         if operation == "neighbors":
             node_id = kwargs["id"]
             return {"id": node_id, "neighbors": [e for e in self.edges if e["source"] == node_id or e["target"] == node_id]}
+        if operation == "relationship_diagnostics":
+            return self._relationship_diagnostics()
         if operation == "schema": return {"nodes": ["memory"], "edges": sorted({e["type"] for e in self.edges})}
         raise ValueError(f"Unsupported graph operation: {operation}")
 
     def stats(self) -> dict[str, Any]:
         return {"memories": len(self.memories), "edges": len(self.edges)}
+
+    def _relationship_diagnostics(self) -> dict[str, Any]:
+        edge_pairs = {(edge["source"], edge["target"]) for edge in self.edges
+                      if edge["type"] == "RESPONDS_TO"}
+        provenance_pairs = {(memory.id, memory.provenance["responds_to"])
+                            for memory in self.memories.values()
+                            if isinstance(memory.provenance.get("responds_to"), str)}
+        return {"relationship": "RESPONDS_TO",
+                "provenanceOnly": [list(pair) for pair in sorted(provenance_pairs - edge_pairs)],
+                "edgeOnly": [list(pair) for pair in sorted(edge_pairs - provenance_pairs)],
+                "consistent": provenance_pairs == edge_pairs}
 
 
 class PolypackBackend(InMemoryBackend):
@@ -372,6 +397,12 @@ class PolypackBackend(InMemoryBackend):
         # traversal remains a useful fallback for text-only MCP clients.
         terms = set(query.lower().split())
         context, limit = kwargs.get("context"), kwargs.get("limit", 10)
+        include_neighbors = bool(kwargs.get("include_neighbors"))
+        neighbor_limit = kwargs.get("neighbor_limit", 1)
+        if neighbor_limit is None:
+            neighbor_limit = 1
+        if neighbor_limit < 0:
+            raise ValueError("neighbor_limit must be zero or greater")
         ranked = []
         for node_id, node in self.graph._nodes.items():
             item = self._node(node_id)
@@ -387,12 +418,12 @@ class PolypackBackend(InMemoryBackend):
         used = 0
         primary_candidates = ranked
         primary_limit = limit
-        if kwargs.get("include_neighbors"):
+        if include_neighbors:
             lexical_matches = [entry for entry in ranked if entry[2] > 0]
             primary_candidates = lexical_matches or ranked[:1]
             # Keep room for at least one hydrated neighbor. If no neighbor is
             # found, the unused slot is filled with another primary below.
-            primary_limit = max(1, limit - 1)
+            primary_limit = limit if neighbor_limit == 0 else max(1, limit - neighbor_limit)
         for score, item, lexical in primary_candidates:
             if len(items) >= primary_limit:
                 break
@@ -405,11 +436,12 @@ class PolypackBackend(InMemoryBackend):
             items.append(item)
             used += item["tokenEstimate"]
         neighbor_count = 0
-        if kwargs.get("include_neighbors"):
-            items, used, neighbor_count = self._append_native_neighbors(
+        more_neighbors = False
+        if include_neighbors:
+            items, used, neighbor_count, more_neighbors = self._append_native_neighbors(
                 items, context=context, strict_context=kwargs.get("strict_context", False),
                 limit=limit, token_budget=budget, edge_types=kwargs.get("edge_types"),
-                depth=kwargs.get("depth", 1), used_budget=used)
+                depth=kwargs.get("depth", 1), neighbor_limit=neighbor_limit, used_budget=used)
             if len(items) < limit:
                 selected_ids = {item["id"] for item in items}
                 for score, item, lexical in primary_candidates:
@@ -433,7 +465,9 @@ class PolypackBackend(InMemoryBackend):
                 "budgetRequested": budget, "budgetUsed": used,
                 "remainingBudget": None if budget is None else budget - used,
                 "neighborCount": neighbor_count,
-                "includeNeighbors": bool(kwargs.get("include_neighbors", False))}}
+                "includeNeighbors": include_neighbors,
+                "neighborLimit": neighbor_limit if include_neighbors else 0,
+                "moreNeighborsAvailable": more_neighbors}}
 
     def _native_edges_for(self, memory_id: str) -> list[dict[str, Any]]:
         return [edge for grouped in self.graph._edges.values() for edge in grouped.values()
@@ -441,13 +475,14 @@ class PolypackBackend(InMemoryBackend):
 
     def _append_native_neighbors(self, primary: list[dict[str, Any]], *, context: str | None,
                                  strict_context: bool, limit: int, token_budget: int | None,
-                                 edge_types: list[str] | None, depth: int,
-                                 used_budget: int) -> tuple[list[dict[str, Any]], int, int]:
+                                 edge_types: list[str] | None, depth: int, neighbor_limit: int,
+                                 used_budget: int) -> tuple[list[dict[str, Any]], int, int, bool]:
         if not primary or depth <= 0:
-            return primary, used_budget, 0
+            return primary, used_budget, 0, False
         selected_ids = {item["id"] for item in primary}
         frontier = set(selected_ids)
         neighbor_count = 0
+        more_neighbors = False
         allowed_types = set(edge_types) if edge_types else None
         for distance in range(1, min(depth, 3) + 1):
             next_frontier: set[str] = set()
@@ -463,7 +498,9 @@ class PolypackBackend(InMemoryBackend):
                     if item["suppressed"] or (context and (item["context"] != context if strict_context else item["context"] not in (None, context))):
                         continue
                     cost = item["tokenEstimate"]
-                    if len(primary) >= limit or (token_budget is not None and used_budget + cost > token_budget):
+                    if (neighbor_count >= neighbor_limit or len(primary) >= limit or
+                            (token_budget is not None and used_budget + cost > token_budget)):
+                        more_neighbors = True
                         continue
                     item.update(retrievalRole="neighbor", distance=distance,
                                 relationship={"edge": edge,
@@ -475,7 +512,7 @@ class PolypackBackend(InMemoryBackend):
             frontier = next_frontier - selected_ids
             if len(primary) >= limit:
                 break
-        return primary, used_budget, neighbor_count
+        return primary, used_budget, neighbor_count, more_neighbors
 
     def context(self, context: str, **kwargs: Any) -> dict[str, Any]:
         budget = kwargs.get("token_budget")
@@ -500,6 +537,19 @@ class PolypackBackend(InMemoryBackend):
 
     def graph_query(self, operation: str, **kwargs: Any) -> dict[str, Any]:
         if operation == "schema": return {"nodes": ["memory"], "edges": sorted({e.get("type") for e in self.graph._edges.values() for e in e.values()})}
+        if operation == "relationship_diagnostics":
+            edge_pairs = {(edge["source"], edge["target"])
+                          for grouped in self.graph._edges.values() for edge in grouped.values()
+                          if edge.get("type") == "RESPONDS_TO"}
+            provenance_pairs = set()
+            for memory_id, node in self.graph._nodes.items():
+                responds_to = node.get("data", {}).get("provenance", {}).get("responds_to")
+                if isinstance(responds_to, str):
+                    provenance_pairs.add((memory_id, responds_to))
+            return {"relationship": "RESPONDS_TO",
+                    "provenanceOnly": [list(pair) for pair in sorted(provenance_pairs - edge_pairs)],
+                    "edgeOnly": [list(pair) for pair in sorted(edge_pairs - provenance_pairs)],
+                    "consistent": provenance_pairs == edge_pairs}
         if operation == "add_edge":
             self.graph.add_edge(kwargs["source"], kwargs["type"], kwargs["target"])
             self._checkpoint()

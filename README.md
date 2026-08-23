@@ -122,15 +122,22 @@ Pass `strict_context: true` for isolation. An empty isolated result reports
   "include_neighbors": true,
   "edge_types": ["RESPONDS_TO"],
   "depth": 2,
+  "neighbor_limit": 3,
   "limit": 20,
   "token_budget": 4000
 }
 ```
 
-Neighbor traversal is opt-in and bounded. Neighbor items include their distance
-and connecting relationship metadata. Use `memory_link` with the default
+Neighbor traversal is opt-in and bounded. `limit` caps the total response and
+`neighbor_limit` caps hydrated neighbors; metadata reports
+`moreNeighborsAvailable` when additional eligible neighbors were found. Neighbor
+items include their distance and connecting relationship metadata. Use
+`memory_link` with the default
 `RESPONDS_TO` relationship for handoffs, reviews, and fixes that address an
-earlier memory. See `polypack://help/workflow` for the agent-facing workflow.
+earlier memory. Graph edges are authoritative for relationships; use
+`graph_query(operation="relationship_diagnostics")` to find legacy
+`provenance.responds_to` values that are not backed by edges. See
+`polypack://help/workflow` for the agent-facing workflow.
 
 Feedback is activation feedback: `useful=true` reinforces a memory and
 `useful=false` provides negative retrieval feedback. Responses expose activation

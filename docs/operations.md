@@ -95,7 +95,12 @@ working context. Store durable decisions and outcomes with `memory_store`; use
 Link a response, verification, or fix to the memory it addresses with
 `memory_link(source_memory_id, target_memory_id, "RESPONDS_TO")`. To follow the
 chain, use `memory_recall` with `include_neighbors=true`,
-`edge_types=["RESPONDS_TO"]`, and a bounded `depth`.
+`edge_types=["RESPONDS_TO"]`, a bounded `depth`, and an explicit
+`neighbor_limit`. The overall `limit` includes both primary and neighbor
+items; `moreNeighborsAvailable` reports when the neighbor bound truncated
+eligible results. Graph edges are authoritative for relationships; use
+`graph_query(operation="relationship_diagnostics")` to audit legacy
+`provenance.responds_to` values.
 
 Context is soft by default. Use `strict_context=true` only when isolation is
 required. If recall returns nothing, broaden the query and retry without strict

@@ -71,6 +71,25 @@ def test_native_recall_reserves_capacity_for_neighbors_when_primary_matches_fill
     assert any(item["retrievalRole"] == "neighbor" for item in result["items"])
 
 
+def test_native_recall_neighbor_limit_reports_more_available():
+    backend = PolypackBackend(PolyGraph())
+    primary = backend.store("primary handoff", context="cross-agent")
+    first = backend.store("first linked response", context="cross-agent")
+    second = backend.store("second linked response", context="cross-agent")
+    backend.link(primary["id"], first["id"], "RESPONDS_TO")
+    backend.link(primary["id"], second["id"], "RESPONDS_TO")
+
+    result = backend.recall(
+        "primary handoff", context="cross-agent", include_neighbors=True,
+        edge_types=["RESPONDS_TO"], depth=1, neighbor_limit=1,
+        limit=4, token_budget=2000,
+    )
+
+    assert result["metadata"]["neighborCount"] == 1
+    assert result["metadata"]["neighborLimit"] == 1
+    assert result["metadata"]["moreNeighborsAvailable"] is True
+
+
 def test_durable_mutations_are_checkpointed_before_backend_returns(tmp_path):
     store_path = tmp_path / "store"
     backend = PolypackBackend(PolyGraph.open(store_path))

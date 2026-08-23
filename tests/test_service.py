@@ -110,6 +110,39 @@ def test_recall_reserves_capacity_for_neighbors_when_primary_matches_fill_limit(
     assert any(item["retrievalRole"] == "neighbor" for item in result["items"])
 
 
+def test_recall_neighbor_limit_and_availability_metadata():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    primary = service.store("primary handoff", context="cross-agent")
+    first = service.store("first linked response", context="cross-agent")
+    second = service.store("second linked response", context="cross-agent")
+    backend.link(primary["id"], first["id"], "RESPONDS_TO")
+    backend.link(primary["id"], second["id"], "RESPONDS_TO")
+
+    result = backend.recall(
+        "primary handoff", context="cross-agent", include_neighbors=True,
+        edge_types=["RESPONDS_TO"], depth=1, neighbor_limit=1,
+        limit=4, token_budget=2000,
+    )
+
+    assert result["metadata"]["neighborCount"] == 1
+    assert result["metadata"]["neighborLimit"] == 1
+    assert result["metadata"]["moreNeighborsAvailable"] is True
+
+
+def test_relationship_diagnostics_identifies_provenance_only_links():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    target = service.store("earlier finding", context="cross-agent")
+    source = service.store("later response", context="cross-agent",
+                           provenance={"responds_to": target["id"]})
+
+    diagnostics = backend.graph_query("relationship_diagnostics")
+    assert diagnostics["provenanceOnly"] == [[source["id"], target["id"]]]
+    assert diagnostics["consistent"] is False
+
+    backend.link(source["id"], target["id"], "RESPONDS_TO")
+    assert backend.graph_query("relationship_diagnostics")["consistent"] is True
+
+
 def test_supersede_and_consolidation_edges_are_traversable():
     backend = InMemoryBackend(); service = MemoryService(backend)
     first = service.store("first fact", context="x")

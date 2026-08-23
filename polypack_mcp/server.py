@@ -88,20 +88,26 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
     def memory_recall(query: str, context: str | None = None, limit: int = 10,
                       strict_context: bool = False, include_neighbors: bool = False,
                       edge_types: list[str] | None = None, depth: int = 1,
+                      neighbor_limit: int = 1,
                       token_budget: int | None = None) -> dict:
         """Search memories by text, context, activation, and confidence.
 
         Use this for a targeted question. Use memory_context to assemble working
         context. Context is soft by default; use strict_context=true for isolation.
         With include_neighbors=true, bounded graph neighbors are hydrated into the
-        result. Filter relationships with edge_types such as RESPONDS_TO.
+        result. Filter relationships with edge_types such as RESPONDS_TO. The
+        neighbor_limit bounds hydrated neighbors; limit remains the total result
+        count. Metadata reports when additional neighbors were available.
         """
         if token_budget is not None and token_budget <= 0:
             raise ValueError("token_budget must be greater than zero")
+        if neighbor_limit < 0:
+            raise ValueError("neighbor_limit must be zero or greater")
         with operation_lock.read():
             return backend.recall(query, context=context, strict_context=strict_context,
                                   limit=max(1, min(limit, 100)), include_neighbors=include_neighbors,
                                   edge_types=edge_types, depth=max(0, min(depth, 3)),
+                                  neighbor_limit=min(neighbor_limit, 100),
                                   token_budget=token_budget)
 
     @mcp.tool()
@@ -164,7 +170,9 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
         """Inspect graph neighbors/schema or perform an advanced edge operation.
 
         Prefer memory_link for normal memory relationships. Supported operations
-        are neighbors, add_edge, and schema.
+        are neighbors, add_edge, schema, and relationship_diagnostics. RESPONDS_TO
+        graph edges are authoritative; diagnostics identifies legacy
+        provenance-only relationships.
         """
         args = {k: v for k, v in {"id": id, "source": source, "target": target, "type": type}.items() if v is not None}
         lock = operation_lock.write if operation == "add_edge" else operation_lock.read
@@ -202,8 +210,11 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
    events/outcomes, and entity for named objects.
 5. Link replies, verifications, and fixes with memory_link using RESPONDS_TO.
 6. Follow a handoff chain with memory_recall(include_neighbors=true,
-   edge_types=[RESPONDS_TO], depth=1 or 2).
+   edge_types=[RESPONDS_TO], depth=1 or 2, neighbor_limit=1 or more).
 7. Call memory_feedback after a retrieved memory materially helps or misleads.
+
+Graph edges are authoritative for relationships. Use graph_query with
+operation=relationship_diagnostics to audit legacy provenance.responds_to fields.
 
 Context is a soft filter unless strict_context=true. If recall is empty, retry
 with a broader query and strict_context=false before assuming the store is empty.
