@@ -19,15 +19,15 @@ user service:
 polypack-mcp setup --store ~/.local/share/polypack-mcp
 ```
 
-This starts an SSE server at `http://127.0.0.1:8765/sse`, restarts it after a
+This starts a Streamable HTTP server at `http://127.0.0.1:8765/mcp`, restarts it after a
 failure, and prints client configuration snippets. The setup command uses
 `systemd --user`; on systems without systemd, start the server directly:
 
 ```sh
-polypack-mcp --transport sse --port 8765 --store ~/.local/share/polypack-mcp
+polypack-mcp --transport streamable-http --port 8765 --store ~/.local/share/polypack-mcp
 ```
 
-In shared SSE mode, configure both clients with the URL. Do not configure them
+In shared Streamable HTTP mode, configure both clients with the URL. Do not configure them
 with a `command` and `--store`, since that starts two processes competing for
 the same durable store.
 
@@ -35,7 +35,7 @@ Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.polypack]
-  url = "http://127.0.0.1:8765/sse"
+  url = "http://127.0.0.1:8765/mcp"
 ```
 
 Claude Desktop:
@@ -43,7 +43,7 @@ Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "polypack": { "url": "http://127.0.0.1:8765/sse" }
+    "polypack": { "url": "http://127.0.0.1:8765/mcp" }
   }
 }
 ```
@@ -52,14 +52,14 @@ Claude Desktop:
 
 The Debian package installs and starts a system-level `polypack-mcp` service
 automatically. It runs as the dedicated `polypack` user, stores data in
-`/var/lib/polypack-mcp`, and exposes the same local SSE endpoint:
+`/var/lib/polypack-mcp`, and exposes the same local Streamable HTTP endpoint:
 
 ```sh
 sudo apt install ./polypack-mcp_<version>_amd64.deb
 ```
 
 After installation, point Claude and Codex at
-`http://127.0.0.1:8765/sse`. The default port can be changed in
+`http://127.0.0.1:8765/mcp`. The default port can be changed in
 `/etc/default/polypack-mcp`, followed by a service restart. The service can be
 managed with:
 
@@ -81,7 +81,7 @@ sudo dnf install ./polypack-mcp-<version>-1.x86_64.rpm
 ```
 
 The RPM package provides the same systemd service, store location, localhost
-SSE endpoint, and Python 3.12 requirement as the Debian package.
+Streamable HTTP endpoint, and Python 3.12 requirement as the Debian package.
 
 ## Run manually
 

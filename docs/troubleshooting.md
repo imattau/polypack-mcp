@@ -41,10 +41,10 @@ For a PyPI setup, recreate the user service with a different `--port` value.
 
 ## Claude or Codex cannot load the server
 
-Check that the client uses the SSE URL rather than launching another process:
+Check that the client uses the Streamable HTTP URL rather than launching another process:
 
 ```text
-http://127.0.0.1:8765/sse
+http://127.0.0.1:8765/mcp
 ```
 
 If the client configuration contains both `command` and `--store`, remove that

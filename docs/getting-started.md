@@ -14,7 +14,7 @@ python3 -m pip install 'polypack-mcp[polypack]'
 
 For a single client using an isolated process, configure that client to launch
 `polypack-mcp` with stdio. For shared memory across multiple clients, create a
-long-running SSE service:
+long-running Streamable HTTP service:
 
 ```sh
 polypack-mcp setup --store ~/.local/share/polypack-mcp
@@ -23,7 +23,7 @@ polypack-mcp setup --store ~/.local/share/polypack-mcp
 The default endpoint is:
 
 ```text
-http://127.0.0.1:8765/sse
+http://127.0.0.1:8765/mcp
 ```
 
 The setup command creates a `systemd --user` service, enables it, starts it,
@@ -41,20 +41,20 @@ sudo apt install ./polypack-mcp_<version>_amd64.deb
 
 The Debian package installs and starts a system service under the dedicated
 `polypack` user. Its default store is `/var/lib/polypack-mcp` and its endpoint
-is `http://127.0.0.1:8765/sse`.
+is `http://127.0.0.1:8765/mcp`.
 
 The packaged native dependencies target Python 3.12, so the package declares
 `python3 (>= 3.12)`.
 
 ## Client configuration
 
-Use the SSE URL in every client that should share the same memory.
+Use the Streamable HTTP URL in every client that should share the same memory.
 
 Codex (`~/.codex/config.toml`):
 
 ```toml
 [mcp_servers.polypack]
-url = "http://127.0.0.1:8765/sse"
+url = "http://127.0.0.1:8765/mcp"
 startup_timeout_sec = 30
 ```
 
@@ -64,13 +64,13 @@ Claude Desktop:
 {
   "mcpServers": {
     "polypack": {
-      "url": "http://127.0.0.1:8765/sse"
+      "url": "http://127.0.0.1:8765/mcp"
     }
   }
 }
 ```
 
-When using the shared SSE service, do not also configure clients with a
+When using the shared Streamable HTTP service, do not also configure clients with a
 `command` and the same `--store` path. That would start competing server
 processes.
 

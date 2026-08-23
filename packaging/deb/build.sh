@@ -43,7 +43,7 @@ Type=simple
 User=polypack
 Group=polypack
 EnvironmentFile=-/etc/default/polypack-mcp
-ExecStart=/usr/bin/polypack-mcp --transport sse --host 127.0.0.1 --port $POLYPACK_MCP_PORT --store /var/lib/polypack-mcp
+ExecStart=/usr/bin/polypack-mcp --transport streamable-http --host 127.0.0.1 --port $POLYPACK_MCP_PORT --store /var/lib/polypack-mcp
 Restart=on-failure
 RestartSec=3
 

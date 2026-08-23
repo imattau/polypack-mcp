@@ -12,7 +12,7 @@ def install_user_service(store: str, port: int = 8765, start: bool = True) -> Pa
     """Install a systemd user service and optionally start it."""
     systemctl = shutil.which("systemctl")
     if not systemctl:
-        raise RuntimeError("systemctl was not found; use --print-config or start the SSE server manually")
+        raise RuntimeError("systemctl was not found; use --print-config or start the HTTP server manually")
 
     executable = shutil.which("polypack-mcp")
     if not executable:
@@ -30,7 +30,7 @@ def install_user_service(store: str, port: int = 8765, start: bool = True) -> Pa
             "After=network.target\n\n"
             "[Service]\n"
             "Type=simple\n"
-            "ExecStart={executable} --transport sse --port {port} --store {store}\n"
+            "ExecStart={executable} --transport streamable-http --port {port} --store {store}\n"
             "Restart=on-failure\n"
             "RestartSec=3\n\n"
             "[Install]\n"
@@ -45,7 +45,7 @@ def install_user_service(store: str, port: int = 8765, start: bool = True) -> Pa
 
 
 def print_client_config(port: int = 8765) -> None:
-    url = f"http://127.0.0.1:{port}/sse"
+    url = f"http://127.0.0.1:{port}/mcp"
     print("Shared Polypack MCP endpoint:")
     print(url)
     print("\nCodex (~/.codex/config.toml):")

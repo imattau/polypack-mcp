@@ -31,7 +31,7 @@ that process through MCP; they do not access the files directly.
 
 ## Port configuration
 
-The default SSE port is `8765` and the server binds to localhost by default.
+The default Streamable HTTP port is `8765` and the server binds to localhost by default.
 
 For a PyPI service, choose a port during setup:
 
@@ -51,11 +51,11 @@ Then restart the service and update each client URL:
 sudo systemctl restart polypack-mcp
 ```
 
-The endpoint becomes `http://127.0.0.1:9001/sse`.
+The endpoint becomes `http://127.0.0.1:9001/mcp`.
 
 ## Concurrency
 
-One shared SSE process supports multiple clients. Reads may run concurrently.
+One shared Streamable HTTP process supports multiple clients. Reads may run concurrently.
 Writes are exclusive and are serialized with respect to reads and other
 writes. This protects Polypack's in-process graph transaction boundary.
 

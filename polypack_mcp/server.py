@@ -149,10 +149,10 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
 def main() -> None:
     parser = argparse.ArgumentParser(description="Polypack adaptive-memory MCP server")
     parser.add_argument("command", nargs="?", choices=("serve", "setup"), default="serve")
-    parser.add_argument("--transport", choices=("stdio", "sse"), default="stdio")
+    parser.add_argument("--transport", choices=("stdio", "sse", "streamable-http"), default="stdio")
     parser.add_argument("--store", help="Polypack directory for durable storage")
-    parser.add_argument("--host", default="127.0.0.1", help="Host used by the SSE server")
-    parser.add_argument("--port", type=int, default=8765, help="Port used by the shared SSE endpoint")
+    parser.add_argument("--host", default="127.0.0.1", help="Host used by the HTTP server")
+    parser.add_argument("--port", type=int, default=8765, help="Port used by the shared HTTP endpoint")
     parser.add_argument("--no-start", action="store_true", help="Write the user service without starting it")
     args = parser.parse_args()
     if args.command == "setup":
