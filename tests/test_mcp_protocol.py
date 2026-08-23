@@ -36,12 +36,15 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
 def test_external_stdio_process_initializes():
     process = subprocess.Popen(
         [sys.executable, "-m", "polypack_mcp.server"],
+        stdin=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     try:
         time.sleep(0.5)
         assert process.poll() is None
     finally:
+        if process.stdin is not None:
+            process.stdin.close()
         process.terminate()
         try:
             process.wait(timeout=5)
