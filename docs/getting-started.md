@@ -70,6 +70,43 @@ Claude Desktop:
 }
 ```
 
+Hermes Agent:
+
+Hermes has a native MCP client. For a dedicated Polypack process, add this to
+`~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  polypack:
+    command: uvx
+    args:
+      - --from
+      - polypack-mcp[polypack]
+      - polypack-mcp
+      - --store
+      - /home/user/.local/share/polypack-mcp
+```
+
+Alternatively, after installing the package locally, the equivalent CLI
+command is:
+
+```sh
+hermes mcp add polypack --command polypack-mcp --args --store /home/user/.local/share/polypack-mcp
+```
+
+If Hermes should share the same memory with Codex or Claude, run
+`polypack-mcp setup --store ~/.local/share/polypack-mcp` and configure Hermes
+with the shared endpoint instead:
+
+```yaml
+mcp_servers:
+  polypack:
+    url: http://127.0.0.1:8765/mcp/
+```
+
+Restart Hermes after changing the configuration. Its Polypack tools will be
+available with the `mcp_polypack_` prefix.
+
 When using the shared Streamable HTTP service, do not also configure clients with a
 `command` and the same `--store` path. That would start competing server
 processes.
