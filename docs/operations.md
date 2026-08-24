@@ -68,6 +68,10 @@ server processes against the same store is unsupported.
 Tools:
 
 - `memory_store`
+- `memory_get`
+- `memory_update`
+- `memory_list_contexts`
+- `memory_delete`
 - `memory_recall`
 - `memory_context`
 - `memory_feedback`
@@ -75,6 +79,10 @@ Tools:
 - `memory_supersede`
 - `memory_consolidate`
 - `memory_link`
+- `memory_unlink`
+- `memory_thread`
+- `memory_store_batch`
+- `memory_link_batch`
 - `graph_query`
 
 Resources:
@@ -101,6 +109,12 @@ items; `moreNeighborsAvailable` reports when the neighbor bound truncated
 eligible results. Graph edges are authoritative for relationships; use
 `graph_query(operation="relationship_diagnostics")` to audit legacy
 `provenance.responds_to` values.
+
+Use `memory_get` for exact lookup and `memory_update` for context, confidence,
+provenance, or metadata changes. Content changes should use supersession.
+`memory_delete` permanently removes a memory and requires `confirm=true`; use
+`memory_suppress` when history should be retained. `memory_unlink` removes
+directed graph edges between two memories.
 
 Context is soft by default. Use `strict_context=true` only when isolation is
 required. If recall returns nothing, broaden the query and retry without strict

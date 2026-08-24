@@ -39,6 +39,28 @@ def test_native_graph_and_feedback_contract():
     assert "activation_before" in feedback and "activation_after" in feedback
 
 
+def test_native_memory_management_tools():
+    backend = PolypackBackend(PolyGraph())
+    first = backend.store("first memory", context="alpha", metadata={"owner": "a"})
+    second = backend.store("second memory", context="beta")
+    backend.link(first["id"], second["id"], "RELATED_TO")
+
+    assert backend.get(first["id"])["id"] == first["id"]
+    assert backend.list_contexts() == {
+        "contexts": ["alpha", "beta"], "counts": {"alpha": 1, "beta": 1}, "unscopedCount": 0
+    }
+    updated = backend.update(first["id"], {"metadata": {"owner": "b"}}, expected_revision=0)
+    assert updated["metadata"] == {"owner": "b"}
+    assert updated["revision"] == 1
+
+    unlinked = backend.unlink(first["id"], second["id"], "RELATED_TO")
+    assert unlinked["removed"] == 1
+    deleted = backend.delete(first["id"], expected_revision=1)
+    assert deleted["deleted"] == first["id"]
+    with pytest.raises(ValueError, match="Unknown memory"):
+        backend.get(first["id"])
+
+
 def test_native_recall_hydrates_responds_to_neighbor():
     backend = PolypackBackend(PolyGraph())
     earlier = backend.store("earlier handoff finding", context="cross-agent")

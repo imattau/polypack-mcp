@@ -99,9 +99,11 @@ pip install -e '.[polypack]'
 polypack-mcp --store ./polypack-data
 ```
 
-The server exposes nine focused tools: `memory_store`, `memory_recall`,
+The server exposes seventeen focused tools: `memory_store`, `memory_get`,
+`memory_update`, `memory_list_contexts`, `memory_delete`, `memory_recall`,
 `memory_context`, `memory_feedback`, `memory_suppress`, `memory_supersede`,
-`memory_consolidate`, `memory_link`, and `graph_query`. It also publishes context,
+`memory_consolidate`, `memory_link`, `memory_unlink`, `memory_thread`,
+`memory_store_batch`, `memory_link_batch`, and `graph_query`. It also publishes context,
 active-memory, schema, stats, and agent workflow guidance resources under
 `polypack://`.
 
@@ -153,6 +155,13 @@ Feedback is activation feedback: `useful=true` reinforces a memory and
 before and after plus whether learned weights changed. Supersession and
 consolidation materialize `SUPERSEDES`, `SUPERSEDED_BY`, and
 `CONSOLIDATED_FROM` graph edges.
+
+Use `memory_get` for exact ID lookup and `memory_update` for mutable fields
+(context, confidence, provenance, and metadata). Content changes should use
+`memory_supersede` so history remains intact. Use `memory_unlink` to correct a
+relationship and `memory_list_contexts` to discover namespaces. `memory_delete`
+is permanent, requires `confirm=true`, and supports an optional revision check;
+prefer `memory_suppress` when retaining history is useful.
 
 Pass `--store` to open a durable Polypack directory. Without it, the server uses
 the in-memory reference backend, which is convenient for smoke tests.

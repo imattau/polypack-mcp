@@ -85,6 +85,44 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
             return service.store(content, memory_class, context, confidence, provenance, metadata)
 
     @mcp.tool()
+    def memory_get(memory_id: str) -> dict:
+        """Fetch one memory by exact ID, including its current state and revision."""
+        with operation_lock.read():
+            return backend.get(memory_id)
+
+    @mcp.tool()
+    def memory_update(memory_id: str, patch: dict, expected_revision: int | None = None) -> dict:
+        """Update mutable memory fields without changing its content.
+
+        Supported fields are context, confidence, provenance, and metadata. Use
+        memory_supersede when the memory content itself needs to change.
+        expected_revision prevents overwriting a concurrent update.
+        """
+        if not isinstance(patch, dict) or not patch:
+            raise ValueError("patch must be a non-empty object")
+        with operation_lock.write():
+            return backend.update(memory_id, patch, expected_revision=expected_revision)
+
+    @mcp.tool()
+    def memory_list_contexts() -> dict:
+        """List context namespaces and the number of memories in each."""
+        with operation_lock.read():
+            return backend.list_contexts()
+
+    @mcp.tool()
+    def memory_delete(memory_id: str, confirm: bool = False,
+                      expected_revision: int | None = None) -> dict:
+        """Permanently delete one memory and its graph edges.
+
+        This destructive operation requires confirm=true. Prefer
+        memory_suppress when retaining history is useful.
+        """
+        if not confirm:
+            raise ValueError("memory_delete requires confirm=true")
+        with operation_lock.write():
+            return backend.delete(memory_id, expected_revision=expected_revision)
+
+    @mcp.tool()
     def memory_recall(query: str, context: str | None = None, limit: int = 10,
                       strict_context: bool = False, include_neighbors: bool = False,
                       edge_types: list[str] | None = None, depth: int = 1,
@@ -177,6 +215,17 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
             return backend.link(source_memory_id, target_memory_id, relationship)
 
     @mcp.tool()
+    def memory_unlink(source_memory_id: str, target_memory_id: str,
+                      relationship: str | None = None) -> dict:
+        """Remove graph edges between two memories.
+
+        If relationship is omitted, all directed edges from source to target
+        are removed.
+        """
+        with operation_lock.write():
+            return backend.unlink(source_memory_id, target_memory_id, relationship)
+
+    @mcp.tool()
     def memory_store_batch(memories: list[dict]) -> list[dict]:
         """Store multiple durable project memories in a single batch.
 
@@ -240,10 +289,15 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
 3. Store durable discoveries, decisions, preferences, and outcomes with memory_store.
 4. Use procedural for conventions/preferences, semantic for facts, episodic for
    events/outcomes, and entity for named objects.
-5. Link replies, verifications, and fixes with memory_link using RESPONDS_TO.
-6. Follow a handoff chain with memory_recall(include_neighbors=true,
+5. Use memory_get for exact IDs and memory_update for context, confidence,
+   provenance, or metadata. Use memory_supersede when content changes.
+6. Link replies, verifications, and fixes with memory_link using RESPONDS_TO;
+   correct mistakes with memory_unlink.
+7. Follow a handoff chain with memory_recall(include_neighbors=true,
    edge_types=[RESPONDS_TO], depth=1 or 2, neighbor_limit=1 or more).
-7. Call memory_feedback after a retrieved memory materially helps or misleads.
+8. Call memory_feedback after a retrieved memory materially helps or misleads.
+9. Use memory_list_contexts to discover namespaces. Use memory_delete only for
+   deliberate permanent cleanup with confirm=true.
 
 Graph edges are authoritative for relationships. Use graph_query with
 operation=relationship_diagnostics to audit legacy provenance.responds_to fields.

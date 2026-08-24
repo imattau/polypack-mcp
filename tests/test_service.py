@@ -1,3 +1,5 @@
+import pytest
+
 from polypack_mcp import InMemoryBackend, MemoryService
 
 def test_store_recall_feedback_and_supersede():
@@ -203,3 +205,27 @@ def test_batch_operations():
     assert linked[1]["source"] == stored[2]["id"]
     assert linked[1]["target"] == stored[1]["id"]
     assert linked[1]["type"] == "RESPONDS_TO"
+
+
+def test_memory_management_tools():
+    backend = InMemoryBackend(); service = MemoryService(backend)
+    first = service.store("first memory", context="alpha", metadata={"owner": "a"})
+    second = service.store("second memory", context="beta")
+    backend.link(first["id"], second["id"], "RELATED_TO")
+
+    assert backend.get(first["id"])["id"] == first["id"]
+    assert backend.list_contexts() == {
+        "contexts": ["alpha", "beta"], "counts": {"alpha": 1, "beta": 1}, "unscopedCount": 0
+    }
+    updated = backend.update(first["id"], {"metadata": {"owner": "b"}}, expected_revision=0)
+    assert updated["metadata"] == {"owner": "b"}
+    assert updated["revision"] == 1
+    with pytest.raises(ValueError, match="expected 0"):
+        backend.update(first["id"], {"context": "changed"}, expected_revision=0)
+
+    unlinked = backend.unlink(first["id"], second["id"], "RELATED_TO")
+    assert unlinked["removed"] == 1
+    deleted = backend.delete(first["id"], expected_revision=1)
+    assert deleted["deleted"] == first["id"]
+    with pytest.raises(ValueError, match="Unknown memory"):
+        backend.get(first["id"])

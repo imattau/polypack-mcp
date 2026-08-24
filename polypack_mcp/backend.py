@@ -31,6 +31,7 @@ class Memory:
     metadata: dict[str, Any] = field(default_factory=dict)
     superseded_by: str | None = None
     suppressed: bool = False
+    revision: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {"id": self.id, "content": self.content, "class": self.memory_class,
@@ -38,11 +39,15 @@ class Memory:
                 "provenance": self.provenance, "activation": round(self.activation, 6),
                 "createdAt": self.created_at, "metadata": self.metadata,
                 "supersededBy": self.superseded_by, "suppressed": self.suppressed,
-                "tokenEstimate": estimate_tokens(self.content)}
+                "tokenEstimate": estimate_tokens(self.content), "revision": self.revision}
 
 
 class MemoryBackend(Protocol):
     def store(self, content: str, **kwargs: Any) -> dict[str, Any]: ...
+    def get(self, memory_id: str) -> dict[str, Any]: ...
+    def update(self, memory_id: str, patch: dict[str, Any], **kwargs: Any) -> dict[str, Any]: ...
+    def list_contexts(self) -> dict[str, Any]: ...
+    def delete(self, memory_id: str, **kwargs: Any) -> dict[str, Any]: ...
     def recall(self, query: str, **kwargs: Any) -> dict[str, Any]: ...
     def context(self, context: str, **kwargs: Any) -> dict[str, Any]: ...
     def feedback(self, memory_id: str, useful: bool, **kwargs: Any) -> dict[str, Any]: ...
@@ -51,6 +56,7 @@ class MemoryBackend(Protocol):
     def consolidate(self, source_ids: list[str], content: str, **kwargs: Any) -> dict[str, Any]: ...
     def graph_query(self, operation: str, **kwargs: Any) -> dict[str, Any]: ...
     def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]: ...
+    def unlink(self, source_id: str, target_id: str, relationship: str | None = None) -> dict[str, Any]: ...
     def stats(self) -> dict[str, Any]: ...
     def memory_thread(self, start_id: str, max_depth: int = 10) -> dict[str, Any]: ...
     def link_batch(self, links: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
@@ -77,6 +83,45 @@ class InMemoryBackend:
                         activation=kwargs.get("activation", 0.1))
         self.memories[memory.id] = memory
         return memory.as_dict()
+
+    def get(self, memory_id: str) -> dict[str, Any]:
+        return self._get(memory_id).as_dict()
+
+    def update(self, memory_id: str, patch: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        memory = self._get(memory_id)
+        expected_revision = kwargs.get("expected_revision")
+        if expected_revision is not None and memory.revision != expected_revision:
+            raise ValueError(f"memory {memory_id} has revision {memory.revision}, expected {expected_revision}")
+        allowed = {"context", "confidence", "provenance", "metadata"}
+        unknown = set(patch) - allowed
+        if unknown:
+            raise ValueError(f"update only supports: {', '.join(sorted(allowed))}")
+        if "confidence" in patch and not 0 <= patch["confidence"] <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+        for field_name in allowed & patch.keys():
+            setattr(memory, field_name, patch[field_name])
+        memory.revision += 1
+        return memory.as_dict()
+
+    def list_contexts(self) -> dict[str, Any]:
+        counts: dict[str, int] = {}
+        unscoped = 0
+        for memory in self.memories.values():
+            if memory.context is None:
+                unscoped += 1
+            else:
+                counts[memory.context] = counts.get(memory.context, 0) + 1
+        return {"contexts": sorted(counts), "counts": counts, "unscopedCount": unscoped}
+
+    def delete(self, memory_id: str, **kwargs: Any) -> dict[str, Any]:
+        memory = self._get(memory_id)
+        expected_revision = kwargs.get("expected_revision")
+        if expected_revision is not None and memory.revision != expected_revision:
+            raise ValueError(f"memory {memory_id} has revision {memory.revision}, expected {expected_revision}")
+        removed_edges = self._edges_for(memory_id)
+        del self.memories[memory_id]
+        self.edges = [edge for edge in self.edges if edge not in removed_edges]
+        return {"deleted": memory_id, "removedEdges": len(removed_edges)}
 
     def _rank(self, query: str = "", context: str | None = None,
               strict_context: bool = False) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -225,6 +270,15 @@ class InMemoryBackend:
 
     def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]:
         return self.graph_query("add_edge", source=source_id, target=target_id, type=relationship)
+
+    def unlink(self, source_id: str, target_id: str, relationship: str | None = None) -> dict[str, Any]:
+        self._get(source_id); self._get(target_id)
+        removed = [edge for edge in self.edges
+                   if edge["source"] == source_id and edge["target"] == target_id
+                   and (relationship is None or edge["type"] == relationship)]
+        self.edges = [edge for edge in self.edges if edge not in removed]
+        return {"source": source_id, "target": target_id, "relationship": relationship,
+                "removed": len(removed), "edges": removed}
 
     def memory_thread(self, start_id: str, max_depth: int = 10) -> dict[str, Any]:
         if start_id not in self.memories:
@@ -380,6 +434,8 @@ class PolypackBackend(InMemoryBackend):
         return self._node(memory_id)
 
     def _node(self, memory_id: str) -> dict[str, Any]:
+        if memory_id not in self.graph._nodes:
+            raise ValueError(f"Unknown memory: {memory_id}")
         node = self.graph._nodes[memory_id]
         data = node.get("data", {})
         content = data.get("content", "")
@@ -391,9 +447,46 @@ class PolypackBackend(InMemoryBackend):
         return {"id": memory_id, "content": content, "class": node.get("memoryClass", "semantic"),
                 "context": data.get("context"), "confidence": node.get("confidence", data.get("confidence", 1.0)),
                 "provenance": provenance, "activation": self.graph.get_activation(memory_id) or 0,
+                "metadata": dict(data.get("metadata", {})),
                 "createdAt": node.get("insertedAt", 0) / 1000.0,
                 "suppressed": bool(data.get("suppressed", False)) or bool(self.engine.inhibition_of(memory_id) > 0),
-                "tokenEstimate": estimate_tokens(content)}
+                "tokenEstimate": estimate_tokens(content), "revision": int(node.get("revision", 0))}
+
+    def get(self, memory_id: str) -> dict[str, Any]:
+        return self._node(memory_id)
+
+    def update(self, memory_id: str, patch: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        self._node(memory_id)
+        allowed = {"context", "confidence", "provenance", "metadata"}
+        unknown = set(patch) - allowed
+        if unknown:
+            raise ValueError(f"update only supports: {', '.join(sorted(allowed))}")
+        if "confidence" in patch and not 0 <= patch["confidence"] <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+        result = self.graph.update_node(memory_id, data=dict(patch),
+                                        expected_revision=kwargs.get("expected_revision"))
+        if result is None:
+            raise ValueError(f"Unknown memory: {memory_id}")
+        self._checkpoint()
+        return self._node(memory_id)
+
+    def list_contexts(self) -> dict[str, Any]:
+        counts: dict[str, int] = {}
+        unscoped = 0
+        for node in self.graph._nodes.values():
+            context = node.get("data", {}).get("context")
+            if context is None:
+                unscoped += 1
+            else:
+                counts[context] = counts.get(context, 0) + 1
+        return {"contexts": sorted(counts), "counts": counts, "unscopedCount": unscoped}
+
+    def delete(self, memory_id: str, **kwargs: Any) -> dict[str, Any]:
+        self._node(memory_id)
+        removed_edges = len(self._native_edges_for(memory_id))
+        self.graph.remove_node(memory_id, expected_revision=kwargs.get("expected_revision"))
+        self._checkpoint()
+        return {"deleted": memory_id, "removedEdges": removed_edges}
 
     def feedback(self, memory_id: str, useful: bool, **kwargs: Any) -> dict[str, Any]:
         before = self.graph.get_activation(memory_id) or 0
@@ -602,6 +695,18 @@ class PolypackBackend(InMemoryBackend):
 
     def link(self, source_id: str, target_id: str, relationship: str) -> dict[str, Any]:
         return self.graph_query("add_edge", source=source_id, target=target_id, type=relationship)
+
+    def unlink(self, source_id: str, target_id: str, relationship: str | None = None) -> dict[str, Any]:
+        self._node(source_id); self._node(target_id)
+        removed = [edge for edge in self._native_edges_for(source_id)
+                   if edge.get("source") == source_id and edge.get("target") == target_id
+                   and (relationship is None or edge.get("type") == relationship)]
+        for edge in removed:
+            self.graph.remove_edge(edge["id"])
+        if removed:
+            self._checkpoint()
+        return {"source": source_id, "target": target_id, "relationship": relationship,
+                "removed": len(removed), "edges": removed}
 
     def memory_thread(self, start_id: str, max_depth: int = 10) -> dict[str, Any]:
         if start_id not in self.graph._nodes:
