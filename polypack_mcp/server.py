@@ -136,18 +136,25 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
         With include_neighbors=true, bounded graph neighbors are hydrated into the
         result. Filter relationships with edge_types such as RESPONDS_TO. The
         neighbor_limit bounds hydrated neighbors; limit remains the total result
-        count. Metadata reports when additional neighbors were available.
+        count. depth is silently clamped to at most 3 hops regardless of the value
+        passed; metadata reports the depth actually applied. Metadata also reports
+        when additional neighbors were available.
         """
         if token_budget is not None and token_budget <= 0:
             raise ValueError("token_budget must be greater than zero")
         if neighbor_limit < 0:
             raise ValueError("neighbor_limit must be zero or greater")
+        applied_depth = max(0, min(depth, 3))
         with operation_lock.read():
-            return backend.recall(query, context=context, strict_context=strict_context,
-                                  limit=max(1, min(limit, 100)), include_neighbors=include_neighbors,
-                                  edge_types=edge_types, depth=max(0, min(depth, 3)),
-                                  neighbor_limit=min(neighbor_limit, 100),
-                                  token_budget=token_budget)
+            result = backend.recall(query, context=context, strict_context=strict_context,
+                                    limit=max(1, min(limit, 100)), include_neighbors=include_neighbors,
+                                    edge_types=edge_types, depth=applied_depth,
+                                    neighbor_limit=min(neighbor_limit, 100),
+                                    token_budget=token_budget)
+        if include_neighbors:
+            result["metadata"]["depthRequested"] = depth
+            result["metadata"]["depthApplied"] = applied_depth
+        return result
 
     @mcp.tool()
     def memory_thread(start_id: str, max_depth: int = 10) -> dict:

@@ -33,10 +33,26 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
             })
             recalled_payload = json.loads(recalled.content[0].text)
             assert recalled_payload["items"][0]["id"] == memory["id"]
+
+            linked = await session.call_tool("memory_store", {
+                "content": "Follow-up to the protocol test", "context": "test"
+            })
+            linked_memory = json.loads(linked.content[0].text)
+            await session.call_tool("memory_link", {
+                "source_memory_id": linked_memory["id"], "target_memory_id": memory["id"],
+            })
+            neighbor_recall = await session.call_tool("memory_recall", {
+                "query": "MCP protocol", "context": "test",
+                "include_neighbors": True, "depth": 10,
+            })
+            neighbor_payload = json.loads(neighbor_recall.content[0].text)
+            assert neighbor_payload["metadata"]["depthRequested"] == 10
+            assert neighbor_payload["metadata"]["depthApplied"] == 3
+
             help_resource = await session.read_resource("polypack://help/workflow")
             assert "memory_link" in help_resource.contents[0].text
             stats = await session.read_resource("polypack://stats")
-            assert '"memories": 1' in stats.contents[0].text
+            assert '"memories": 2' in stats.contents[0].text
 
     asyncio.run(exercise())
 
