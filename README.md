@@ -92,7 +92,15 @@ sudo polypack-mcp embeddings setup qwen3 --system --store /var/lib/polypack-mcp
 
 This creates a managed localhost helper, downloads Qwen once into the store's
 embedding cache, and reindexes existing memories. The model is not bundled in
-the Debian/RPM package. Check or disable it with:
+the Debian/RPM package.
+
+The helper loads Qwen3-Embedding-0.6B in bfloat16 (~1GB resident once loaded,
+versus ~2.4GB in fp32) and unloads it after 15 minutes of inactivity,
+reloading automatically on the next request. `memory_recall` results include
+a `semantic` entry in `scoreComponents` whenever the helper is reachable,
+alongside `lexical` and `activation` — the three sum to the reported `score`.
+If the helper is stopped or errors, recall falls back to lexical + activation
+scoring automatically. Check or disable it with:
 
 ```sh
 polypack-mcp embeddings status

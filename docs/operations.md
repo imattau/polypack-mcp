@@ -70,6 +70,28 @@ helper is stopped. Inspect the provider with:
 polypack-mcp embeddings status
 ```
 
+### Resource footprint and idle unload
+
+Qwen3-Embedding-0.6B loads in bfloat16, using roughly 1GB resident once a
+request has triggered the load (fp32 would be ~2.4GB — just the weights at 4
+bytes/param). A background watchdog unloads the model after 15 minutes with
+no `/embed` or `/health` calls, dropping the helper's footprint to a few MB;
+the next request reloads it in a few seconds (weights stay cached under
+`HF_HOME`, so this is a re-instantiate, not a re-download). The idle window
+is not exposed through `embeddings setup` — override it by editing
+`ExecStart` in the unit (`polypack-mcp-embedding.service` under
+`/etc/systemd/system` or the user equivalent) to add `--idle-timeout SECONDS`
+(`0` disables unloading), then `systemctl restart polypack-mcp-embedding`.
+
+### Score components
+
+When the helper is reachable, `memory_recall`/`memory_context` weight results
+as `0.55 * semantic + 0.30 * lexical + 0.15 * activation`, and
+`scoreComponents` reports all three (summing to `score`). Without a reachable
+helper, scoring falls back to `lexical + 0.25 * activation` and
+`scoreComponents` omits `semantic` entirely — its absence is itself a signal
+that recall is running lexical-only.
+
 ## Concurrency
 
 One shared stateless Streamable HTTP process supports multiple clients without
