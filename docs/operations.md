@@ -92,6 +92,12 @@ helper, scoring falls back to `lexical + 0.25 * activation` and
 `scoreComponents` omits `semantic` entirely — its absence is itself a signal
 that recall is running lexical-only.
 
+This weighting is `polypack-mcp`'s retrieval policy, not part of `polypack`
+itself. The core library supplies the primitives — vector similarity, graph
+traversal, activation decay — and this server chooses how to blend them into
+one ranked result; a different polypack-based consumer could reasonably pick
+different weights. Don't expect to find this formula in `polypack` core.
+
 ## Concurrency
 
 One shared stateless Streamable HTTP process supports multiple clients without

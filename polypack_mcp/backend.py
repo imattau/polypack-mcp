@@ -603,6 +603,11 @@ class PolypackBackend(InMemoryBackend):
                 self._embedding_error = f"{type(exc).__name__}: {exc}"
                 query_vector = None
         ranked = []
+        # This weighting (and the fact that it lives here rather than in polypack
+        # core) is deliberate: polypack supplies the primitives (similar_to, graph
+        # traversal, activation), but how they're blended into one ranked result
+        # is this server's retrieval policy. Other polypack consumers may want a
+        # different blend, so keep it out of the shared library.
         for node_id, node in self.graph._nodes.items():
             item = self._node(node_id)
             if item.get("suppressed") or (context and (item["context"] != context if kwargs.get("strict_context") else item["context"] not in (None, context))): continue
