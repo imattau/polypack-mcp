@@ -1,4 +1,7 @@
 import pytest
+from pathlib import Path
+
+import polypack_mcp.embedding_cli as embedding_cli
 
 pytest.importorskip("polypack")
 
@@ -53,3 +56,22 @@ def test_context_updates_refresh_the_embedding():
     backend.update(memory["id"], {"context": "other"})
 
     assert backend.graph._nodes[memory["id"]]["vector"] == [0.0, 1.0]
+
+
+def test_system_reindex_restores_service_store_ownership(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(embedding_cli, "_reindex", lambda store, provider: calls.append(("reindex", store)) or 3)
+    monkeypatch.setattr(
+        embedding_cli.subprocess,
+        "run",
+        lambda args, **kwargs: calls.append(("run", args, kwargs)) or None,
+    )
+
+    store = Path(tmp_path)
+    assert embedding_cli._reindex_with_service_ownership(store, object(), system=True) == 3
+
+    assert calls == [
+        ("reindex", store),
+        ("run", ["chown", "-R", "polypack:polypack", str(store)], {"check": True}),
+    ]

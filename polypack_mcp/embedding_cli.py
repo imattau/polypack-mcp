@@ -118,6 +118,20 @@ def _reindex(store: Path, provider: HTTPEmbeddingProvider) -> int:
     return changed
 
 
+def _reindex_with_service_ownership(store: Path, provider: HTTPEmbeddingProvider, system: bool) -> int:
+    """Reindex and leave a system store writable by the MCP service user.
+
+    System setup/reindex is normally invoked with sudo, so checkpoint files
+    created by Polypack can otherwise become root-owned. The main service runs
+    as ``polypack`` and must be able to append to the WAL afterward.
+    """
+    try:
+        return _reindex(store, provider)
+    finally:
+        if system:
+            subprocess.run(["chown", "-R", "polypack:polypack", str(store)], check=True)
+
+
 def setup_qwen(store: Path, system: bool) -> None:
     if shutil.which("systemctl") is None:
         raise RuntimeError("systemd is required for managed embeddings; use an external provider instead")
@@ -144,7 +158,7 @@ def setup_qwen(store: Path, system: bool) -> None:
     try:
         from polypack import PolyGraph  # validates the installed Polypack backend before stopping work
         del PolyGraph
-        count = _reindex(store, provider)
+        count = _reindex_with_service_ownership(store, provider, system)
         print(f"Reindexed {count} memories")
     finally:
         if main_was_active:
@@ -169,7 +183,7 @@ def reindex(store: Path, system: bool) -> None:
     if main_was_active:
         _systemctl(system, "stop", "polypack-mcp.service")
     try:
-        count = _reindex(store, provider)
+        count = _reindex_with_service_ownership(store, provider, system)
         print(f"Reindexed {count} memories")
     finally:
         if main_was_active:
