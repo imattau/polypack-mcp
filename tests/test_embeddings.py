@@ -35,6 +35,10 @@ def test_provider_vectors_are_stored_and_used_for_recall():
     assert unrelated["id"] in {item["id"] for item in result["items"]}
     assert backend.stats()["embedding"]["model"] == "test"
 
+    top = result["items"][0]
+    assert "semantic" in top["scoreComponents"]
+    assert top["score"] == pytest.approx(sum(top["scoreComponents"].values()))
+
 
 def test_provider_failure_falls_back_to_lexical_recall():
     class BrokenProvider(FakeProvider):
@@ -47,6 +51,10 @@ def test_provider_failure_falls_back_to_lexical_recall():
 
     assert result["items"][0]["id"] == memory["id"]
     assert backend.stats()["embedding"]["status"] == "unavailable"
+
+    top = result["items"][0]
+    assert "semantic" not in top["scoreComponents"]
+    assert top["score"] == pytest.approx(sum(top["scoreComponents"].values()))
 
 
 def test_context_updates_refresh_the_embedding():

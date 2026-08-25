@@ -609,10 +609,12 @@ class PolypackBackend(InMemoryBackend):
             lexical = len(terms & set(item["content"].lower().split())) / max(len(terms), 1)
             semantic = semantic_scores.get(node_id, 0.0)
             if query_vector is not None:
-                score = 0.55 * semantic + 0.30 * lexical + 0.15 * item["activation"]
+                components = {"semantic": round(0.55 * semantic, 6), "lexical": round(0.30 * lexical, 6),
+                              "activation": round(0.15 * item["activation"], 6)}
             else:
-                score = lexical + item["activation"] * 0.25
-            if score: ranked.append((score, item, lexical))
+                components = {"lexical": round(lexical, 6), "activation": round(item["activation"] * 0.25, 6)}
+            score = sum(components.values())
+            if score: ranked.append((score, item, lexical, components))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
         budget = kwargs.get("token_budget")
         if budget is not None and budget <= 0:
@@ -627,14 +629,12 @@ class PolypackBackend(InMemoryBackend):
             # Keep room for at least one hydrated neighbor. If no neighbor is
             # found, the unused slot is filled with another primary below.
             primary_limit = limit if neighbor_limit == 0 else max(1, limit - neighbor_limit)
-        for score, item, lexical in primary_candidates:
+        for score, item, lexical, components in primary_candidates:
             if len(items) >= primary_limit:
                 break
             if budget is not None and used + item["tokenEstimate"] > budget:
                 continue
-            item = {**item, "score": round(score, 6),
-                    "scoreComponents": {"lexical": round(lexical, 6),
-                                        "activation": round(item["activation"] * 0.25, 6)},
+            item = {**item, "score": round(score, 6), "scoreComponents": components,
                     "retrievalRole": "primary"}
             items.append(item)
             used += item["tokenEstimate"]
@@ -647,24 +647,22 @@ class PolypackBackend(InMemoryBackend):
                 depth=kwargs.get("depth", 1), neighbor_limit=neighbor_limit, used_budget=used)
             if len(items) < limit:
                 selected_ids = {item["id"] for item in items}
-                for score, item, lexical in primary_candidates:
+                for score, item, lexical, components in primary_candidates:
                     if len(items) >= limit:
                         break
                     if item["id"] in selected_ids:
                         continue
                     if budget is not None and used + item["tokenEstimate"] > budget:
                         continue
-                    item = {**item, "score": round(score, 6),
-                            "scoreComponents": {"lexical": round(lexical, 6),
-                                                "activation": round(item["activation"] * 0.25, 6)},
+                    item = {**item, "score": round(score, 6), "scoreComponents": components,
                             "retrievalRole": "primary"}
                     items.append(item)
                     selected_ids.add(item["id"])
                     used += item["tokenEstimate"]
         return {"items": items, "metadata": {"retrievalVersion": RETRIEVAL_VERSION,
-                "candidateCount": len(ranked), "matchedContext": sum(1 for _, x, _ in ranked if x["context"] == context) if context else 0,
+                "candidateCount": len(ranked), "matchedContext": sum(1 for _, x, _, _ in ranked if x["context"] == context) if context else 0,
                 "excludedCount": max(0, len(self.graph._nodes) - len(ranked)),
-                "fallbackAttempted": bool(context and any(x["context"] is None for _, x, _ in ranked)),
+                "fallbackAttempted": bool(context and any(x["context"] is None for _, x, _, _ in ranked)),
                 "budgetRequested": budget, "budgetUsed": used,
                 "remainingBudget": None if budget is None else budget - used,
                 "neighborCount": neighbor_count,
