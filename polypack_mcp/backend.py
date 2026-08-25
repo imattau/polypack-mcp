@@ -624,8 +624,9 @@ class PolypackBackend(InMemoryBackend):
         primary_candidates = ranked
         primary_limit = limit
         if include_neighbors:
-            lexical_matches = [entry for entry in ranked if entry[2] > 0]
-            primary_candidates = lexical_matches or ranked[:1]
+            meaningful_matches = [entry for entry in ranked
+                                   if entry[2] > 0 or entry[3].get("semantic", 0) > 0]
+            primary_candidates = meaningful_matches or ranked[:1]
             # Keep room for at least one hydrated neighbor. If no neighbor is
             # found, the unused slot is filled with another primary below.
             primary_limit = limit if neighbor_limit == 0 else max(1, limit - neighbor_limit)

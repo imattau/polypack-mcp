@@ -40,6 +40,34 @@ def test_provider_vectors_are_stored_and_used_for_recall():
     assert top["score"] == pytest.approx(sum(top["scoreComponents"].values()))
 
 
+def test_include_neighbors_keeps_zero_lexical_semantic_match_as_primary():
+    class TaggedProvider:
+        def __init__(self, vectors):
+            self.vectors = vectors
+
+        def embed(self, texts):
+            return [self.vectors[text] for text in texts]
+
+        def descriptor(self):
+            return {"provider": "fake", "model": "test", "dimension": 2, "version": "1"}
+
+    query = "warm beverage appliance repair"
+    semantic_only = "espresso machine broken"
+    lexical_only = "floor plan requires repair crew"
+    provider = TaggedProvider({
+        query: [1.0, 0.0],
+        semantic_only: [1.0, 0.0],
+        lexical_only: [0.0, 1.0],
+    })
+    backend = PolypackBackend(PolyGraph(), embedding_provider=provider)
+    semantic_match = backend.store(semantic_only)
+    backend.store(lexical_only)
+
+    result = backend.recall(query, limit=1, include_neighbors=True, neighbor_limit=1)
+
+    assert result["items"][0]["id"] == semantic_match["id"]
+
+
 def test_provider_failure_falls_back_to_lexical_recall():
     class BrokenProvider(FakeProvider):
         def embed(self, texts):
