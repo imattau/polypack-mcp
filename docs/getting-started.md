@@ -128,7 +128,21 @@ processes.
 On Fedora, RHEL-compatible, or other RPM-based systems:
 
 ```sh
-sudo dnf install ./polypack-mcp-<version>-1.x86_64.rpm
+sudo rpm --import https://imattau.github.io/polypack-mcp/rpm/RPM-GPG-KEY-polypack-mcp
+sudo tee /etc/yum.repos.d/polypack-mcp.repo >/dev/null <<'EOF'
+[polypack-mcp]
+name=Polypack MCP
+baseurl=https://imattau.github.io/polypack-mcp/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://imattau.github.io/polypack-mcp/rpm/RPM-GPG-KEY-polypack-mcp
+EOF
+sudo dnf install polypack-mcp
 ```
 
 The RPM package installs the same system-level service as the Debian package.
+The matching release asset can also be installed directly:
+
+```sh
+sudo dnf install ./polypack-mcp-<version>-1.x86_64.rpm
+```

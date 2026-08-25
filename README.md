@@ -100,7 +100,22 @@ The repository is updated automatically for each `v*.*.*` release tag. See
 
 ### RPM package
 
-RPM-based distributions can install the matching `.rpm` asset from the
+RPM-based distributions can install from the public RPM repository:
+
+```sh
+sudo rpm --import https://imattau.github.io/polypack-mcp/rpm/RPM-GPG-KEY-polypack-mcp
+sudo tee /etc/yum.repos.d/polypack-mcp.repo >/dev/null <<'EOF'
+[polypack-mcp]
+name=Polypack MCP
+baseurl=https://imattau.github.io/polypack-mcp/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://imattau.github.io/polypack-mcp/rpm/RPM-GPG-KEY-polypack-mcp
+EOF
+sudo dnf install polypack-mcp
+```
+
+The matching `.rpm` asset is also attached to the
 [GitHub release](https://github.com/imattau/polypack-mcp/releases):
 
 ```sh
