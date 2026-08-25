@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Protocol
 from urllib.request import Request, urlopen
+
+DEFAULT_IDLE_TIMEOUT = 900.0
 
 
 class EmbeddingProvider(Protocol):
@@ -68,24 +72,45 @@ class _QwenHandler(BaseHTTPRequestHandler):
     dimension = 1024
     load_error: str | None = None
     model_lock = threading.Lock()
+    idle_timeout = DEFAULT_IDLE_TIMEOUT
+    last_used: float = 0.0
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"embedding-helper: {format % args}", flush=True)
 
     @classmethod
     def load_model(cls) -> None:
+        cls.last_used = time.monotonic()
         if cls.model is not None or cls.load_error is not None:
             return
         with cls.model_lock:
             if cls.model is not None or cls.load_error is not None:
                 return
             try:
+                import torch
                 from sentence_transformers import SentenceTransformer
 
-                cls.model = SentenceTransformer(cls.model_name)
+                cls.model = SentenceTransformer(
+                    cls.model_name, model_kwargs={"torch_dtype": torch.bfloat16}
+                )
                 cls.dimension = int(cls.model.get_sentence_embedding_dimension())
             except Exception as exc:  # startup health should explain dependency/model failures
                 cls.load_error = f"{type(exc).__name__}: {exc}"
+
+    @classmethod
+    def unload_if_idle(cls) -> None:
+        if cls.model is None:
+            return
+        if time.monotonic() - cls.last_used < cls.idle_timeout:
+            return
+        with cls.model_lock:
+            if cls.model is None:
+                return
+            if time.monotonic() - cls.last_used < cls.idle_timeout:
+                return
+            cls.model = None
+            gc.collect()
+            print("embedding-helper: unloaded model after idle timeout", flush=True)
 
     def _json(self, status: int, payload: dict[str, Any]) -> None:
         encoded = json.dumps(payload).encode("utf-8")
@@ -131,12 +156,24 @@ class _QwenHandler(BaseHTTPRequestHandler):
             self._json(400, {"error": f"{type(exc).__name__}: {exc}"})
 
 
-def helper_main(host: str = "127.0.0.1", port: int = 8766) -> None:
+def _idle_watchdog(stop: threading.Event, interval: float = 60.0) -> None:
+    while not stop.wait(interval):
+        _QwenHandler.unload_if_idle()
+
+
+def helper_main(
+    host: str = "127.0.0.1", port: int = 8766, idle_timeout: float = DEFAULT_IDLE_TIMEOUT
+) -> None:
+    _QwenHandler.idle_timeout = idle_timeout
     server = ThreadingHTTPServer((host, port), _QwenHandler)
+    stop = threading.Event()
+    watchdog = threading.Thread(target=_idle_watchdog, args=(stop,), daemon=True)
+    watchdog.start()
     print(f"embedding-helper listening on http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
     finally:
+        stop.set()
         server.server_close()
 
 
@@ -144,8 +181,15 @@ def _helper_cli(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Local Qwen embedding helper")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
+    parser.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=DEFAULT_IDLE_TIMEOUT,
+        help="Seconds of inactivity before the model is unloaded (0 disables unloading)",
+    )
     args = parser.parse_args(argv)
-    helper_main(args.host, args.port)
+    idle_timeout = args.idle_timeout if args.idle_timeout > 0 else float("inf")
+    helper_main(args.host, args.port, idle_timeout)
     return 0
 
 

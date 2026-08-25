@@ -2,6 +2,7 @@ import pytest
 from pathlib import Path
 
 import polypack_mcp.embedding_cli as embedding_cli
+import polypack_mcp.embeddings as embeddings
 
 pytest.importorskip("polypack")
 
@@ -56,6 +57,23 @@ def test_context_updates_refresh_the_embedding():
     backend.update(memory["id"], {"context": "other"})
 
     assert backend.graph._nodes[memory["id"]]["vector"] == [0.0, 1.0]
+
+
+def test_unload_if_idle_clears_model_after_timeout(monkeypatch):
+    handler = embeddings._QwenHandler
+    handler.model = object()
+    handler.idle_timeout = 10.0
+    handler.last_used = 0.0
+
+    monkeypatch.setattr(embeddings.time, "monotonic", lambda: 5.0)
+    handler.unload_if_idle()
+    assert handler.model is not None
+
+    monkeypatch.setattr(embeddings.time, "monotonic", lambda: 20.0)
+    handler.unload_if_idle()
+    assert handler.model is None
+
+    handler.idle_timeout = embeddings.DEFAULT_IDLE_TIMEOUT
 
 
 def test_system_reindex_restores_service_store_ownership(monkeypatch, tmp_path):
