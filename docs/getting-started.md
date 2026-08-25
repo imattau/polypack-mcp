@@ -46,6 +46,18 @@ is `http://127.0.0.1:8765/mcp/`.
 The packaged native dependencies target Python 3.12, so the package declares
 `python3 (>= 3.12)`.
 
+For repeatable installation and upgrades, use the public APT repository instead
+of downloading an individual release asset:
+
+```sh
+curl -fsSL https://imattau.github.io/polypack-mcp/gpg.key \
+  | sudo gpg --dearmor -o /usr/share/keyrings/polypack-mcp.gpg
+echo "deb [signed-by=/usr/share/keyrings/polypack-mcp.gpg] https://imattau.github.io/polypack-mcp stable main" \
+  | sudo tee /etc/apt/sources.list.d/polypack-mcp.list
+sudo apt update
+sudo apt install polypack-mcp
+```
+
 ## Client configuration
 
 Use the Streamable HTTP URL in every client that should share the same memory.

@@ -80,6 +80,24 @@ sudo systemctl restart polypack-mcp
 The PyPI installation remains user-managed and uses `polypack-mcp setup` to
 create a per-user service instead.
 
+### APT repository
+
+The latest Debian package is also published to the public APT repository at
+`https://imattau.github.io/polypack-mcp`. Configure it with the repository's
+signing key, then install and update normally:
+
+```sh
+curl -fsSL https://imattau.github.io/polypack-mcp/gpg.key \
+  | sudo gpg --dearmor -o /usr/share/keyrings/polypack-mcp.gpg
+echo "deb [signed-by=/usr/share/keyrings/polypack-mcp.gpg] https://imattau.github.io/polypack-mcp stable main" \
+  | sudo tee /etc/apt/sources.list.d/polypack-mcp.list
+sudo apt update
+sudo apt install polypack-mcp
+```
+
+The repository is updated automatically for each `v*.*.*` release tag. See
+`docs/apt-repository.md` for maintainer setup instructions.
+
 ### RPM package
 
 RPM-based distributions can install the matching `.rpm` asset from the
