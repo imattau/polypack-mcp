@@ -64,3 +64,18 @@ ls -l /var/lib/polypack-mcp/store.lock
 Do not remove a lock while a Polypack server is running. If the lock belongs to
 a crashed process and no server is active, stop the service, remove the stale
 lock, and start the service again.
+
+## Embedding setup fails
+
+The optional Qwen setup needs `systemd`, Python virtual-environment support,
+network access for the first model download, and approximately 2 GB of free
+disk space. Check the helper state with:
+
+```sh
+polypack-mcp embeddings status
+sudo systemctl status polypack-mcp-embedding
+```
+
+If the helper is unavailable, the main MCP service should still answer using
+lexical and activation retrieval. Retry setup after fixing the dependency or
+network problem; it is safe to run repeatedly.

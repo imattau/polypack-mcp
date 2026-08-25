@@ -53,6 +53,23 @@ sudo systemctl restart polypack-mcp
 
 The endpoint becomes `http://127.0.0.1:9001/mcp/`.
 
+## Optional embeddings
+
+Enable managed Qwen semantic retrieval with:
+
+```sh
+sudo polypack-mcp embeddings setup qwen3 --system --store /var/lib/polypack-mcp
+```
+
+The helper listens only on `127.0.0.1:8766`. The MCP sends provider-generated
+vectors to Polypack, which owns vector persistence and similarity search. The
+base service continues to operate with lexical and activation fallback if the
+helper is stopped. Inspect the provider with:
+
+```sh
+polypack-mcp embeddings status
+```
+
 ## Concurrency
 
 One shared stateless Streamable HTTP process supports multiple clients without

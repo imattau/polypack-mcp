@@ -80,6 +80,31 @@ sudo systemctl restart polypack-mcp
 The PyPI installation remains user-managed and uses `polypack-mcp setup` to
 create a per-user service instead.
 
+### Optional semantic retrieval
+
+The default installation uses Polypack's local graph, activation, and lexical
+retrieval without downloading an AI model. To enable local Qwen semantic
+retrieval, run:
+
+```sh
+sudo polypack-mcp embeddings setup qwen3 --system --store /var/lib/polypack-mcp
+```
+
+This creates a managed localhost helper, downloads Qwen once into the store's
+embedding cache, and reindexes existing memories. The model is not bundled in
+the Debian/RPM package. Check or disable it with:
+
+```sh
+polypack-mcp embeddings status
+sudo polypack-mcp embeddings disable --system --store /var/lib/polypack-mcp
+```
+
+For a PyPI user service, omit `sudo --system` and use the user store:
+
+```sh
+polypack-mcp embeddings setup qwen3
+```
+
 ### APT repository
 
 The latest Debian package is also published to the public APT repository at

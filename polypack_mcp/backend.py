@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+from .embeddings import EmbeddingProvider
+
 CLASSES = {"episodic", "semantic", "procedural", "entity"}
 MemoryClass = Literal["entity", "episodic", "procedural", "semantic"]
 RETRIEVAL_VERSION = "2026-08-22"
@@ -405,13 +407,52 @@ class InMemoryBackend:
 class PolypackBackend(InMemoryBackend):
     """Adapter using the real Python Polypack graph and activation engine."""
 
-    def __init__(self, graph: Any | None = None) -> None:
+    def __init__(self, graph: Any | None = None, embedding_provider: EmbeddingProvider | None = None) -> None:
         try:
             from polypack import ActivationEngine, PolyGraph
         except ImportError as exc:
             raise RuntimeError("Install polypack-db or use InMemoryBackend") from exc
         self.graph = graph or PolyGraph()
         self.engine = ActivationEngine(self.graph)
+        self.embedding_provider = embedding_provider
+        self._embedding_error: str | None = None
+
+    def embedding_status(self) -> dict[str, Any]:
+        if self.embedding_provider is None:
+            return {"enabled": False, "status": "disabled"}
+        try:
+            descriptor = self.embedding_provider.descriptor()
+            status = "unavailable" if self._embedding_error else "ready"
+            result = {"enabled": True, "status": status, **descriptor}
+            if self._embedding_error:
+                result["error"] = self._embedding_error
+            return result
+        except Exception as exc:
+            return {"enabled": True, "status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+
+    @staticmethod
+    def _embedding_text(content: str, context: str | None = None) -> str:
+        return f"context: {context}\ncontent: {content}" if context else content
+
+    def _embed_one(self, content: str, context: str | None = None) -> list[float] | None:
+        if self.embedding_provider is None:
+            return None
+        try:
+            self._embedding_error = None
+            return self.embedding_provider.embed([self._embedding_text(content, context)])[0]
+        except Exception as exc:
+            self._embedding_error = f"{type(exc).__name__}: {exc}"
+            return None
+
+    def _embed_query(self, query: str) -> list[float] | None:
+        if self.embedding_provider is None:
+            return None
+        try:
+            self._embedding_error = None
+            return self.embedding_provider.embed([query])[0]
+        except Exception as exc:
+            self._embedding_error = f"{type(exc).__name__}: {exc}"
+            return None
 
     def _checkpoint(self) -> None:
         """Persist a mutation when the graph has an attached durable store."""
@@ -424,12 +465,16 @@ class PolypackBackend(InMemoryBackend):
 
     def store(self, content: str, **kwargs: Any) -> dict[str, Any]:
         now = int(time.time() * 1000); memory_id = kwargs.get("id", str(uuid.uuid4()))
+        context = kwargs.get("context")
         node = {"id": memory_id, "type": "memory", "memoryClass": kwargs.get("memory_class", "semantic"),
-                "data": {"content": content, "context": kwargs.get("context"), "provenance": kwargs.get("provenance", {}),
+                "data": {"content": content, "context": context, "provenance": kwargs.get("provenance", {}),
                          "confidence": kwargs.get("confidence", 1.0), "metadata": kwargs.get("metadata", {})},
                 "insertedAt": now, "updatedAt": now}
+        vector = self._embed_one(content, context)
+        if vector is not None:
+            node["vector"] = vector
         self.graph.add_node(node); self.graph.reinforce_node(memory_id, kwargs.get("activation", 0.1), "memory_store",
-                                                             context=kwargs.get("context"))
+                                                             context=context)
         self._checkpoint()
         return self._node(memory_id)
 
@@ -463,8 +508,14 @@ class PolypackBackend(InMemoryBackend):
             raise ValueError(f"update only supports: {', '.join(sorted(allowed))}")
         if "confidence" in patch and not 0 <= patch["confidence"] <= 1:
             raise ValueError("confidence must be between 0 and 1")
-        result = self.graph.update_node(memory_id, data=dict(patch),
-                                        expected_revision=kwargs.get("expected_revision"))
+        update_kwargs: dict[str, Any] = {"data": dict(patch),
+                                         "expected_revision": kwargs.get("expected_revision")}
+        if "context" in patch and self.embedding_provider is not None:
+            current = self.graph._nodes[memory_id].get("data", {})
+            vector = self._embed_one(current.get("content", ""), patch["context"])
+            if vector is not None:
+                update_kwargs["vector"] = vector
+        result = self.graph.update_node(memory_id, **update_kwargs)
         if result is None:
             raise ValueError(f"Unknown memory: {memory_id}")
         self._checkpoint()
@@ -520,13 +571,14 @@ class PolypackBackend(InMemoryBackend):
                 "data": {"content": content, "context": kwargs.get("context"),
                          "confidence": kwargs.get("confidence", 1.0), "derivedFrom": source_ids},
                 "insertedAt": now, "updatedAt": now}
+        vector = self._embed_one(content, kwargs.get("context"))
+        if vector is not None:
+            node["vector"] = vector
         self.graph.consolidate(node, source_ids)
         self._checkpoint()
         return self._node(memory_id)
 
     def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
-        # Embeddings are intentionally supplied by a future caller; lexical graph
-        # traversal remains a useful fallback for text-only MCP clients.
         terms = set(query.lower().split())
         context, limit = kwargs.get("context"), kwargs.get("limit", 10)
         include_neighbors = bool(kwargs.get("include_neighbors"))
@@ -535,12 +587,31 @@ class PolypackBackend(InMemoryBackend):
             neighbor_limit = 1
         if neighbor_limit < 0:
             raise ValueError("neighbor_limit must be zero or greater")
+        query_vector = self._embed_query(query)
+        semantic_scores: dict[str, float] = {}
+        if query_vector is not None:
+            try:
+                similar = self.graph.query().where_type("memory").similar_to(
+                    query_vector, top_k=max(limit * 5, 50)
+                ).to_list()
+                for node in similar:
+                    vector = node.get("vector")
+                    if vector:
+                        dot = sum(float(a) * float(b) for a, b in zip(query_vector, vector))
+                        semantic_scores[node["id"]] = max(0.0, min(1.0, dot))
+            except Exception as exc:
+                self._embedding_error = f"{type(exc).__name__}: {exc}"
+                query_vector = None
         ranked = []
         for node_id, node in self.graph._nodes.items():
             item = self._node(node_id)
             if item.get("suppressed") or (context and (item["context"] != context if kwargs.get("strict_context") else item["context"] not in (None, context))): continue
             lexical = len(terms & set(item["content"].lower().split())) / max(len(terms), 1)
-            score = lexical + item["activation"] * 0.25
+            semantic = semantic_scores.get(node_id, 0.0)
+            if query_vector is not None:
+                score = 0.55 * semantic + 0.30 * lexical + 0.15 * item["activation"]
+            else:
+                score = lexical + item["activation"] * 0.25
             if score: ranked.append((score, item, lexical))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
         budget = kwargs.get("token_budget")
@@ -736,4 +807,6 @@ class PolypackBackend(InMemoryBackend):
         return {"items": items}
 
     def stats(self) -> dict[str, Any]:
-        return {"memories": self.graph.size, "edges": sum(len(edges) for edges in self.graph._edges.values())}
+        return {"memories": self.graph.size, "edges": sum(len(edges) for edges in self.graph._edges.values()),
+                "embedding": self.embedding_status(),
+                "embeddingError": self._embedding_error}

@@ -26,7 +26,7 @@ Version: $version
 Section: utils
 Priority: optional
 Architecture: $architecture
-Depends: python3 (>= 3.12), adduser
+Depends: python3 (>= 3.12), python3-venv, adduser
 Suggests: systemd
 Maintainer: Polypack contributors
 Description: Persistent adaptive memory MCP server

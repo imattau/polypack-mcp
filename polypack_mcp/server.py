@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import signal
 from contextlib import contextmanager
 from threading import Condition, RLock
@@ -308,6 +309,10 @@ with a broader query and strict_context=false before assuming the store is empty
     return mcp
 
 def main() -> None:
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "embeddings":
+        from .embedding_cli import main as embedding_main
+        raise SystemExit(embedding_main(sys.argv[2:]))
     parser = argparse.ArgumentParser(description="Polypack adaptive-memory MCP server")
     parser.add_argument("command", nargs="?", choices=("serve", "setup"), default="serve")
     parser.add_argument("--transport", choices=("stdio", "sse", "streamable-http"), default="stdio")
@@ -325,8 +330,11 @@ def main() -> None:
     backend = None
     if args.store:
         from .backend import PolypackBackend
+        from .embeddings import HTTPEmbeddingProvider
         from polypack import PolyGraph
-        backend = PolypackBackend(PolyGraph.open(args.store))
+        embedding_url = os.environ.get("POLYPACK_MCP_EMBEDDING_URL")
+        provider = HTTPEmbeddingProvider(embedding_url) if embedding_url else None
+        backend = PolypackBackend(PolyGraph.open(args.store), embedding_provider=provider)
     server = create_server(backend, host=args.host, port=args.port)
     try:
         if backend is not None:

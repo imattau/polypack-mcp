@@ -8,7 +8,8 @@ import subprocess
 from pathlib import Path
 
 
-def install_user_service(store: str, port: int = 8765, start: bool = True) -> Path:
+def install_user_service(store: str, port: int = 8765, start: bool = True,
+                         embedding_url: str | None = None) -> Path:
     """Install a systemd user service and optionally start it."""
     systemctl = shutil.which("systemctl")
     if not systemctl:
@@ -31,11 +32,16 @@ def install_user_service(store: str, port: int = 8765, start: bool = True) -> Pa
             "[Service]\n"
             "Type=simple\n"
             "ExecStart={executable} --transport streamable-http --port {port} --store {store}\n"
+            "{embedding_environment}"
             "Restart=on-failure\n"
             "RestartSec=3\n\n"
             "[Install]\n"
             "WantedBy=default.target\n"
-        ).format(executable=executable, port=port, store=store_path),
+        ).format(
+            executable=executable, port=port, store=store_path,
+            embedding_environment=(f"Environment=POLYPACK_MCP_EMBEDDING_URL={embedding_url}\n"
+                                   if embedding_url else ""),
+        ),
         encoding="utf-8",
     )
     subprocess.run([systemctl, "--user", "daemon-reload"], check=True)

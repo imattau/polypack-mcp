@@ -30,6 +30,29 @@ The setup command creates a `systemd --user` service, enables it, starts it,
 and prints client configuration snippets. It does not edit client
 configuration files automatically.
 
+## Optional semantic retrieval
+
+The base installation does not download an embedding model. To add managed
+local Qwen retrieval after a Debian/RPM installation:
+
+```sh
+sudo polypack-mcp embeddings setup qwen3 --system --store /var/lib/polypack-mcp
+```
+
+The command creates a localhost-only helper service, downloads the model into
+`/var/lib/polypack-mcp/.embedding/cache`, reindexes existing memories, and
+restarts the MCP service. The initial download requires network access and
+approximately 2 GB of free disk space. If the helper is unavailable later,
+the MCP remains usable with lexical and activation fallback.
+
+For a PyPI user installation:
+
+```sh
+polypack-mcp embeddings setup qwen3
+```
+
+The model and its inference dependencies are kept outside the main package.
+
 ## Debian installation
 
 Download the `.deb` asset from the [GitHub release](https://github.com/imattau/polypack-mcp/releases),

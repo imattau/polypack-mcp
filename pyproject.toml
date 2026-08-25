@@ -12,6 +12,7 @@ dependencies = ["mcp>=1.9,<1.10", "anyio>=4.5,<4.10"]
 
 [project.optional-dependencies]
 polypack = ["polypack-db>=3.3.1"]
+qwen = ["sentence-transformers>=3.0,<6"]
 dev = ["pytest>=8"]
 
 [project.scripts]
