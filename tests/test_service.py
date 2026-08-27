@@ -188,6 +188,8 @@ def test_batch_operations():
     ]
     stored = service.store_batch(memories_to_store)
     assert len(stored) == 3
+    assert all(item["id"] for item in stored)
+    assert len({item["id"] for item in stored}) == 3
     assert stored[0]["content"] == "Batch memory 1"
     assert stored[1]["class"] == "episodic"
     assert stored[2]["class"] == "procedural"
@@ -205,6 +207,10 @@ def test_batch_operations():
     assert linked[1]["source"] == stored[2]["id"]
     assert linked[1]["target"] == stored[1]["id"]
     assert linked[1]["type"] == "RESPONDS_TO"
+
+    # Caller-provided IDs remain supported.
+    explicit = service.store_batch([{"id": "explicit-batch-id", "content": "Explicit batch memory"}])
+    assert explicit[0]["id"] == "explicit-batch-id"
 
 
 def test_memory_management_tools():

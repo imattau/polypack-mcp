@@ -36,14 +36,17 @@ class MemoryService:
             metadata = item.get("metadata")
 
             # Store it
-            res = self.backend.store(
-                content,
-                memory_class=memory_class,
-                context=context,
-                confidence=confidence,
-                provenance=provenance or {},
-                metadata=metadata or {},
-                id=item.get("id")
-            )
+            store_kwargs = {
+                "memory_class": memory_class,
+                "context": context,
+                "confidence": confidence,
+                "provenance": provenance or {},
+                "metadata": metadata or {},
+            }
+            # Do not pass an explicit None: durable backends use an omitted
+            # ID to generate one, while id=None is an invalid node ID.
+            if item.get("id") is not None:
+                store_kwargs["id"] = item["id"]
+            res = self.backend.store(content, **store_kwargs)
             results.append(res)
         return results
