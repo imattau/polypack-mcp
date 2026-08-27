@@ -80,7 +80,8 @@ mkdir -p /var/lib/polypack-mcp
 chown -R polypack:polypack /var/lib/polypack-mcp
 chmod 0750 /var/lib/polypack-mcp
 if command -v systemctl >/dev/null; then
-    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || \
+        echo "polypack-mcp installed; systemd daemon-reload failed"
     if systemctl is-active --quiet polypack-mcp.service; then
         systemctl restart polypack-mcp.service >/dev/null 2>&1 || \
             echo "polypack-mcp updated; restart it with: systemctl restart polypack-mcp"
