@@ -18,7 +18,8 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
                 "memory_store", "memory_get", "memory_update", "memory_list_contexts", "memory_delete",
                 "memory_recall", "memory_context", "memory_feedback", "memory_suppress",
                 "memory_supersede", "memory_consolidate", "memory_link", "memory_unlink",
-                "memory_thread", "memory_store_batch", "memory_link_batch", "graph_query",
+                "memory_thread", "memory_store_batch", "memory_link_batch",
+                "memory_store_with_link", "graph_query",
             }
             store_tool = next(tool for tool in tools.tools if tool.name == "memory_store")
             assert store_tool.inputSchema["properties"]["memory_class"]["enum"] == [
@@ -49,10 +50,26 @@ def test_stdio_protocol_lists_surface_and_round_trips_memory():
             assert neighbor_payload["metadata"]["depthRequested"] == 10
             assert neighbor_payload["metadata"]["depthApplied"] == 3
 
+            combo = await session.call_tool("memory_store_with_link", {
+                "content": "Fix verified for the protocol test", "target_memory_id": memory["id"],
+            })
+            combo_payload = json.loads(combo.content[0].text)
+            assert combo_payload["link"] == {
+                "source": combo_payload["memory"]["id"], "type": "RESPONDS_TO", "target": memory["id"],
+            }
+            combo_neighbor_recall = await session.call_tool("memory_recall", {
+                "query": "MCP protocol", "context": "test",
+                "include_neighbors": True, "depth": 1, "neighbor_limit": 5,
+            })
+            combo_neighbor_payload = json.loads(combo_neighbor_recall.content[0].text)
+            item_ids = {item["id"] for item in combo_neighbor_payload["items"]}
+            assert combo_payload["memory"]["id"] in item_ids
+
             help_resource = await session.read_resource("polypack://help/workflow")
             assert "memory_link" in help_resource.contents[0].text
+            assert "memory_store_with_link" in help_resource.contents[0].text
             stats = await session.read_resource("polypack://stats")
-            assert '"memories": 2' in stats.contents[0].text
+            assert '"memories": 3' in stats.contents[0].text
 
     asyncio.run(exercise())
 

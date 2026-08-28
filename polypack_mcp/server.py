@@ -223,6 +223,25 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
             return backend.link(source_memory_id, target_memory_id, relationship)
 
     @mcp.tool()
+    def memory_store_with_link(content: str, target_memory_id: str, relationship: str = "RESPONDS_TO",
+                               memory_class: MemoryClass = "semantic", context: str | None = None,
+                               confidence: float = 1.0, provenance: dict | None = None,
+                               metadata: dict | None = None, reverse: bool = False) -> dict:
+        """Store a new memory and link it to an existing memory in one call.
+
+        Combines memory_store and memory_link for the common case of storing a
+        reply, verification, or fix that responds to an earlier memory. By
+        default the new memory is the link source (new -relationship-> target);
+        set reverse=true to make the new memory the link target instead.
+        """
+        with operation_lock.write():
+            backend.get(target_memory_id)
+            stored = service.store(content, memory_class, context, confidence, provenance, metadata)
+            source_id, target_id = (target_memory_id, stored["id"]) if reverse else (stored["id"], target_memory_id)
+            link = backend.link(source_id, target_id, relationship)
+            return {"memory": stored, "link": link}
+
+    @mcp.tool()
     def memory_unlink(source_memory_id: str, target_memory_id: str,
                       relationship: str | None = None) -> dict:
         """Remove graph edges between two memories.
@@ -300,7 +319,8 @@ def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1",
 5. Use memory_get for exact IDs and memory_update for context, confidence,
    provenance, or metadata. Use memory_supersede when content changes.
 6. Link replies, verifications, and fixes with memory_link using RESPONDS_TO;
-   correct mistakes with memory_unlink.
+   correct mistakes with memory_unlink. Use memory_store_with_link to store
+   and link in one call.
 7. Follow a handoff chain with memory_recall(include_neighbors=true,
    edge_types=[RESPONDS_TO], depth=1 or 2, neighbor_limit=1 or more).
 8. Call memory_feedback after a retrieved memory materially helps or misleads.
