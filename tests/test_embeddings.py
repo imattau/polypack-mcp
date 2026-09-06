@@ -131,6 +131,27 @@ def test_system_reindex_restores_service_store_ownership(monkeypatch, tmp_path):
     ]
 
 
+def test_system_reindex_uses_yunohost_service_ownership(monkeypatch, tmp_path):
+    calls = []
+
+    monkeypatch.setattr(embedding_cli, "_reindex", lambda store, provider: calls.append(("reindex", store)) or 3)
+    monkeypatch.setattr(
+        embedding_cli.subprocess,
+        "run",
+        lambda args, **kwargs: calls.append(("run", args, kwargs)) or None,
+    )
+
+    store = Path(tmp_path)
+    assert embedding_cli._reindex_with_service_ownership(
+        store, object(), system=True, service_user="polypack_mcp", service_group="polypack_mcp"
+    ) == 3
+
+    assert calls == [
+        ("reindex", store),
+        ("run", ["chown", "-R", "polypack_mcp:polypack_mcp", str(store)], {"check": True}),
+    ]
+
+
 def test_model_sources_accept_catalog_entries_and_hugging_face_repo_urls():
     assert embedding_cli._model_name("all-minilm-l6-v2") == "sentence-transformers/all-MiniLM-L6-v2"
     assert embedding_cli._model_name("custom", "https://huggingface.co/BAAI/bge-base-en-v1.5") == "BAAI/bge-base-en-v1.5"

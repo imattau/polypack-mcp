@@ -35,6 +35,9 @@ MODEL_CATALOG = {
 }
 DEFAULT_MODEL = "all-minilm-l6-v2"
 EMBEDDING_PORT = 8766
+DEFAULT_MAIN_SERVICE = "polypack-mcp.service"
+DEFAULT_SERVICE_USER = "polypack"
+DEFAULT_SERVICE_GROUP = "polypack"
 
 
 def _paths(store: Path) -> tuple[Path, Path, Path]:
@@ -94,9 +97,9 @@ def _unit_path(system: bool) -> Path:
     return Path("/etc/systemd/system" if system else Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "systemd/user") / "polypack-mcp-embedding.service"
 
 
-def _main_dropin(system: bool) -> Path:
+def _main_dropin(system: bool, main_service: str = DEFAULT_MAIN_SERVICE) -> Path:
     base = Path("/etc/systemd/system" if system else Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "systemd/user")
-    return base / "polypack-mcp.service.d" / "embedding.conf"
+    return base / f"{main_service}.d" / "embedding.conf"
 
 
 def _systemctl(system: bool, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -107,21 +110,28 @@ def _systemctl(system: bool, *args: str, check: bool = True) -> subprocess.Compl
     return subprocess.run(command, check=check, text=True, capture_output=True)
 
 
-def _write_unit(store: Path, venv: Path, cache: Path, system: bool) -> None:
+def _write_unit(
+    store: Path,
+    venv: Path,
+    cache: Path,
+    system: bool,
+    service_user: str = DEFAULT_SERVICE_USER,
+    service_group: str = DEFAULT_SERVICE_GROUP,
+) -> None:
     unit = _unit_path(system)
     unit.parent.mkdir(parents=True, exist_ok=True)
     package_root = str(Path(__file__).resolve().parent.parent)
     venv_site = subprocess.check_output(
         [str(venv / "bin/python"), "-c", "import site; print(site.getsitepackages()[0])"], text=True
     ).strip()
-    service_user = "User=polypack\nGroup=polypack\n" if system else ""
+    service_identity = f"User={service_user}\nGroup={service_group}\n" if system else ""
     unit.write_text(
         "[Unit]\n"
         "Description=Polypack Qwen embedding helper\n"
         "After=network-online.target\n\n"
         "[Service]\n"
         "Type=simple\n"
-        f"{service_user}"
+        f"{service_identity}"
         f"Environment=HF_HOME={cache}\n"
         f"EnvironmentFile=-{_embedding_env_path(store)}\n"
         f"Environment=PYTHONPATH={package_root}:{venv_site}\n"
@@ -134,8 +144,8 @@ def _write_unit(store: Path, venv: Path, cache: Path, system: bool) -> None:
     )
 
 
-def _configure_main(system: bool, enabled: bool) -> None:
-    dropin = _main_dropin(system)
+def _configure_main(system: bool, enabled: bool, main_service: str = DEFAULT_MAIN_SERVICE) -> None:
+    dropin = _main_dropin(system, main_service)
     if enabled:
         dropin.parent.mkdir(parents=True, exist_ok=True)
         dropin.write_text(
@@ -183,21 +193,35 @@ def _reindex(store: Path, provider: HTTPEmbeddingProvider) -> int:
     return changed
 
 
-def _reindex_with_service_ownership(store: Path, provider: HTTPEmbeddingProvider, system: bool) -> int:
+def _reindex_with_service_ownership(
+    store: Path,
+    provider: HTTPEmbeddingProvider,
+    system: bool,
+    service_user: str = DEFAULT_SERVICE_USER,
+    service_group: str = DEFAULT_SERVICE_GROUP,
+) -> int:
     """Reindex and leave a system store writable by the MCP service user.
 
     System setup/reindex is normally invoked with sudo, so checkpoint files
-    created by Polypack can otherwise become root-owned. The main service runs
-    as ``polypack`` and must be able to append to the WAL afterward.
+    created by Polypack can otherwise become root-owned. The main service must
+    be able to append to the WAL afterward.
     """
     try:
         return _reindex(store, provider)
     finally:
         if system:
-            subprocess.run(["chown", "-R", "polypack:polypack", str(store)], check=True)
+            subprocess.run(["chown", "-R", f"{service_user}:{service_group}", str(store)], check=True)
 
 
-def setup_model(store: Path, model: str, custom_url: str | None, system: bool) -> None:
+def setup_model(
+    store: Path,
+    model: str,
+    custom_url: str | None,
+    system: bool,
+    main_service: str = DEFAULT_MAIN_SERVICE,
+    service_user: str = DEFAULT_SERVICE_USER,
+    service_group: str = DEFAULT_SERVICE_GROUP,
+) -> None:
     if shutil.which("systemctl") is None:
         raise RuntimeError("systemd is required for managed embeddings; use an external provider instead")
     root, venv, cache = _paths(store)
@@ -205,34 +229,67 @@ def setup_model(store: Path, model: str, custom_url: str | None, system: bool) -
     root.mkdir(parents=True, exist_ok=True)
     if not (venv / "bin/python").exists():
         subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+    pip = str(venv / "bin/pip")
+    # YunoHost servers generally have no CUDA runtime. Install the CPU wheel
+    # explicitly; otherwise the unconstrained PyPI torch dependency can pull
+    # several gigabytes of CUDA libraries before the model itself downloads.
     subprocess.run(
-        [str(venv / "bin/pip"), "install", "--upgrade", "sentence-transformers>=3.0,<6"],
+        [
+            pip,
+            "install",
+            "--upgrade",
+            "--force-reinstall",
+            "--index-url",
+            "https://download.pytorch.org/whl/cpu",
+            "--no-deps",
+            "torch",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [pip, "install", "--upgrade", "--no-deps", "sentence-transformers>=3.0,<6"],
+        check=True,
+    )
+    subprocess.run(
+        [
+            pip,
+            "install",
+            "--upgrade",
+            "transformers<6.0.0,>=4.41.0",
+            "huggingface-hub>=0.23.0",
+            "numpy>=1.20.0",
+            "scikit-learn>=1.2.2",
+            "scipy",
+            "tqdm>=4.0.0",
+            "Pillow",
+            "typing_extensions>=4.5.0",
+        ],
         check=True,
     )
     if system:
-        subprocess.run(["chown", "-R", "polypack:polypack", str(root)], check=True)
+        subprocess.run(["chown", "-R", f"{service_user}:{service_group}", str(root)], check=True)
     _write_embedding_env(store, model_name)
     if system:
-        subprocess.run(["chown", "polypack:polypack", str(_embedding_env_path(store))], check=True)
-    _write_unit(store, venv, cache, system)
-    _configure_main(system, True)
+        subprocess.run(["chown", f"{service_user}:{service_group}", str(_embedding_env_path(store))], check=True)
+    _write_unit(store, venv, cache, system, service_user, service_group)
+    _configure_main(system, True, main_service)
     _systemctl(system, "daemon-reload")
     _systemctl(system, "enable", "polypack-mcp-embedding.service")
     _systemctl(system, "restart", "polypack-mcp-embedding.service")
     provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{EMBEDDING_PORT}", timeout=60)
     health = _wait_for_helper(provider)
     print(f"Embedding helper ready: {health['model']} ({health['dimension']} dimensions)")
-    main_was_active = _systemctl(system, "is-active", "--quiet", "polypack-mcp.service", check=False).returncode == 0
+    main_was_active = _systemctl(system, "is-active", "--quiet", main_service, check=False).returncode == 0
     if main_was_active:
-        _systemctl(system, "stop", "polypack-mcp.service")
+        _systemctl(system, "stop", main_service)
     try:
         from polypack import PolyGraph  # validates the installed Polypack backend before stopping work
         del PolyGraph
-        count = _reindex_with_service_ownership(store, provider, system)
+        count = _reindex_with_service_ownership(store, provider, system, service_user, service_group)
         print(f"Reindexed {count} memories")
     finally:
         if main_was_active:
-            _systemctl(system, "start", "polypack-mcp.service")
+            _systemctl(system, "start", main_service)
     print("Semantic retrieval is enabled.")
 
 
@@ -241,28 +298,34 @@ def setup_qwen(store: Path, system: bool) -> None:
     setup_model(store, "qwen3-embedding-0.6b", None, system)
 
 
-def disable(store: Path, system: bool) -> None:
-    _configure_main(system, False)
+def disable(store: Path, system: bool, main_service: str = DEFAULT_MAIN_SERVICE) -> None:
+    _configure_main(system, False, main_service)
     if shutil.which("systemctl"):
         _systemctl(system, "disable", "--now", "polypack-mcp-embedding.service", check=False)
         _systemctl(system, "daemon-reload", check=False)
-        _systemctl(system, "restart", "polypack-mcp.service", check=False)
+        _systemctl(system, "restart", main_service, check=False)
     print("Semantic retrieval disabled; the model cache was retained.")
 
 
-def reindex(store: Path, system: bool) -> None:
+def reindex(
+    store: Path,
+    system: bool,
+    main_service: str = DEFAULT_MAIN_SERVICE,
+    service_user: str = DEFAULT_SERVICE_USER,
+    service_group: str = DEFAULT_SERVICE_GROUP,
+) -> None:
     provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{EMBEDDING_PORT}", timeout=60)
     health = _wait_for_helper(provider)
     print(f"Embedding helper ready: {health['model']}")
-    main_was_active = _systemctl(system, "is-active", "--quiet", "polypack-mcp.service", check=False).returncode == 0
+    main_was_active = _systemctl(system, "is-active", "--quiet", main_service, check=False).returncode == 0
     if main_was_active:
-        _systemctl(system, "stop", "polypack-mcp.service")
+        _systemctl(system, "stop", main_service)
     try:
-        count = _reindex_with_service_ownership(store, provider, system)
+        count = _reindex_with_service_ownership(store, provider, system, service_user, service_group)
         print(f"Reindexed {count} memories")
     finally:
         if main_was_active:
-            _systemctl(system, "start", "polypack-mcp.service")
+            _systemctl(system, "start", main_service)
 
 
 def status() -> None:
@@ -280,17 +343,28 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--custom-url", help="Hugging Face model repository URL or owner/model id")
     parser.add_argument("--store", default="~/.local/share/polypack-mcp")
     parser.add_argument("--system", action="store_true", help="manage system services instead of user services")
+    parser.add_argument("--main-service", default=DEFAULT_MAIN_SERVICE, help="main Polypack systemd service name")
+    parser.add_argument("--service-user", default=DEFAULT_SERVICE_USER, help="system service user")
+    parser.add_argument("--service-group", default=DEFAULT_SERVICE_GROUP, help="system service group")
     args = parser.parse_args(argv)
     store = Path(args.store).expanduser().resolve()
     if args.action == "setup":
         try:
-            setup_model(store, args.model, args.custom_url, args.system)
+            setup_model(
+                store,
+                args.model,
+                args.custom_url,
+                args.system,
+                args.main_service,
+                args.service_user,
+                args.service_group,
+            )
         except ValueError as exc:
             parser.error(str(exc))
     elif args.action == "status":
         status()
     elif args.action == "disable":
-        disable(store, args.system)
+        disable(store, args.system, args.main_service)
     else:
-        reindex(store, args.system)
+        reindex(store, args.system, args.main_service, args.service_user, args.service_group)
     return 0
