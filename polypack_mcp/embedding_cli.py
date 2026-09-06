@@ -118,6 +118,7 @@ def _write_unit(
     system: bool,
     service_user: str = DEFAULT_SERVICE_USER,
     service_group: str = DEFAULT_SERVICE_GROUP,
+    port: int = EMBEDDING_PORT,
 ) -> None:
     unit = _unit_path(system)
     unit.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +137,7 @@ def _write_unit(
         f"Environment=HF_HOME={cache}\n"
         f"EnvironmentFile=-{_embedding_env_path(store)}\n"
         f"Environment=PYTHONPATH={package_root}:{venv_site}\n"
-        f"ExecStart={venv / 'bin/python'} -m polypack_mcp.embeddings --host 127.0.0.1 --port {EMBEDDING_PORT}\n"
+        f"ExecStart={venv / 'bin/python'} -m polypack_mcp.embeddings --host 127.0.0.1 --port {port}\n"
         "Restart=on-failure\n"
         "RestartSec=5\n\n"
         "[Install]\n"
@@ -145,12 +146,17 @@ def _write_unit(
     )
 
 
-def _configure_main(system: bool, enabled: bool, main_service: str = DEFAULT_MAIN_SERVICE) -> None:
+def _configure_main(
+    system: bool,
+    enabled: bool,
+    main_service: str = DEFAULT_MAIN_SERVICE,
+    port: int = EMBEDDING_PORT,
+) -> None:
     dropin = _main_dropin(system, main_service)
     if enabled:
         dropin.parent.mkdir(parents=True, exist_ok=True)
         dropin.write_text(
-            "[Service]\nEnvironment=POLYPACK_MCP_EMBEDDING_URL=http://127.0.0.1:8766\n",
+            f"[Service]\nEnvironment=POLYPACK_MCP_EMBEDDING_URL=http://127.0.0.1:{port}\n",
             encoding="utf-8",
         )
     elif dropin.exists():
@@ -232,6 +238,7 @@ def setup_model(
     main_service: str = DEFAULT_MAIN_SERVICE,
     service_user: str = DEFAULT_SERVICE_USER,
     service_group: str = DEFAULT_SERVICE_GROUP,
+    port: int = EMBEDDING_PORT,
 ) -> None:
     if shutil.which("systemctl") is None:
         raise RuntimeError("systemd is required for managed embeddings; use an external provider instead")
@@ -282,12 +289,12 @@ def setup_model(
     _write_embedding_env(store, model_name)
     if system:
         subprocess.run(["chown", f"{service_user}:{service_group}", str(_embedding_env_path(store))], check=True)
-    _write_unit(store, venv, cache, system, service_user, service_group)
-    _configure_main(system, True, main_service)
+    _write_unit(store, venv, cache, system, service_user, service_group, port)
+    _configure_main(system, True, main_service, port)
     _systemctl(system, "daemon-reload")
     _systemctl(system, "enable", "polypack-mcp-embedding.service")
     _systemctl(system, "restart", "polypack-mcp-embedding.service")
-    provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{EMBEDDING_PORT}", timeout=60)
+    provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{port}", timeout=60)
     health = _wait_for_helper(provider)
     print(f"Embedding helper ready: {health['model']} ({health['dimension']} dimensions)")
     main_was_active = _systemctl(system, "is-active", "--quiet", main_service, check=False).returncode == 0
@@ -304,13 +311,18 @@ def setup_model(
     print("Semantic retrieval is enabled.")
 
 
-def setup_qwen(store: Path, system: bool) -> None:
+def setup_qwen(store: Path, system: bool, port: int = EMBEDDING_PORT) -> None:
     """Backward-compatible wrapper for the original Qwen setup command."""
-    setup_model(store, "qwen3-embedding-0.6b", None, system)
+    setup_model(store, "qwen3-embedding-0.6b", None, system, port=port)
 
 
-def disable(store: Path, system: bool, main_service: str = DEFAULT_MAIN_SERVICE) -> None:
-    _configure_main(system, False, main_service)
+def disable(
+    store: Path,
+    system: bool,
+    main_service: str = DEFAULT_MAIN_SERVICE,
+    port: int = EMBEDDING_PORT,
+) -> None:
+    _configure_main(system, False, main_service, port)
     if shutil.which("systemctl"):
         _systemctl(system, "disable", "--now", "polypack-mcp-embedding.service", check=False)
         _systemctl(system, "daemon-reload", check=False)
@@ -324,8 +336,9 @@ def reindex(
     main_service: str = DEFAULT_MAIN_SERVICE,
     service_user: str = DEFAULT_SERVICE_USER,
     service_group: str = DEFAULT_SERVICE_GROUP,
+    port: int = EMBEDDING_PORT,
 ) -> None:
-    provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{EMBEDDING_PORT}", timeout=60)
+    provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{port}", timeout=60)
     health = _wait_for_helper(provider)
     print(f"Embedding helper ready: {health['model']}")
     main_was_active = _systemctl(system, "is-active", "--quiet", main_service, check=False).returncode == 0
@@ -339,8 +352,8 @@ def reindex(
             _systemctl(system, "start", main_service)
 
 
-def status() -> None:
-    provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{EMBEDDING_PORT}", timeout=3)
+def status(port: int = EMBEDDING_PORT) -> None:
+    provider = HTTPEmbeddingProvider(f"http://127.0.0.1:{port}", timeout=3)
     try:
         print(json.dumps(provider.health(), indent=2))
     except Exception as exc:
@@ -357,6 +370,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--main-service", default=DEFAULT_MAIN_SERVICE, help="main Polypack systemd service name")
     parser.add_argument("--service-user", default=DEFAULT_SERVICE_USER, help="system service user")
     parser.add_argument("--service-group", default=DEFAULT_SERVICE_GROUP, help="system service group")
+    parser.add_argument("--port", type=int, default=EMBEDDING_PORT, help="localhost port for the embedding helper")
     args = parser.parse_args(argv)
     store = Path(args.store).expanduser().resolve()
     if args.action == "setup":
@@ -369,13 +383,14 @@ def main(argv: list[str]) -> int:
                 args.main_service,
                 args.service_user,
                 args.service_group,
+                args.port,
             )
         except ValueError as exc:
             parser.error(str(exc))
     elif args.action == "status":
-        status()
+        status(args.port)
     elif args.action == "disable":
         disable(store, args.system, args.main_service)
     else:
-        reindex(store, args.system, args.main_service, args.service_user, args.service_group)
+        reindex(store, args.system, args.main_service, args.service_user, args.service_group, args.port)
     return 0

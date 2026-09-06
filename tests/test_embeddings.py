@@ -171,6 +171,38 @@ def test_helper_health_error_is_reported_without_waiting_for_timeout():
         embedding_cli._wait_for_helper(BrokenProvider(), timeout=900)
 
 
+def test_embedding_unit_and_main_dropin_use_allocated_port(monkeypatch, tmp_path):
+    store = Path(tmp_path)
+    venv = store / "venv"
+    cache = store / "cache"
+    unit_path = store / "systemd" / "polypack-mcp-embedding.service"
+    dropin_path = store / "systemd" / "polypack-mcp.service.d" / "embedding.conf"
+    monkeypatch.setattr(embedding_cli, "_unit_path", lambda system: unit_path)
+    monkeypatch.setattr(embedding_cli, "_main_dropin", lambda system, service: dropin_path)
+    original_unit = unit_path.read_text() if unit_path.exists() else None
+    original_dropin = dropin_path.read_text() if dropin_path.exists() else None
+    try:
+        monkeypatch.setattr(
+            embedding_cli.subprocess,
+            "check_output",
+            lambda *args, **kwargs: str(venv / "lib" / "python3.11" / "site-packages").encode(),
+        )
+        embedding_cli._write_unit(store, venv, cache, False, port=9876)
+        embedding_cli._configure_main(False, True, "polypack-mcp.service", 9876)
+        assert "--port 9876" in unit_path.read_text()
+        assert "http://127.0.0.1:9876" in dropin_path.read_text()
+    finally:
+        if original_unit is None:
+            unit_path.unlink(missing_ok=True)
+        else:
+            unit_path.write_text(original_unit)
+        if original_dropin is None:
+            dropin_path.unlink(missing_ok=True)
+        else:
+            dropin_path.parent.mkdir(parents=True, exist_ok=True)
+            dropin_path.write_text(original_dropin)
+
+
 def test_model_sources_accept_catalog_entries_and_hugging_face_repo_urls():
     assert embedding_cli._model_name("all-minilm-l6-v2") == "sentence-transformers/all-MiniLM-L6-v2"
     assert embedding_cli._model_name("custom", "https://huggingface.co/BAAI/bge-base-en-v1.5") == "BAAI/bge-base-en-v1.5"
