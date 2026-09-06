@@ -5,9 +5,9 @@ import json
 import os
 import signal
 from contextlib import contextmanager
-from threading import Condition, RLock
+from threading import Condition, Event, RLock, Thread
 
-from .backend import MemoryClass
+from .backend import MemoryBackend, MemoryClass
 
 
 def _raise_keyboard_interrupt(signum, frame):
@@ -53,6 +53,47 @@ class ReadWriteLock:
             with self._condition:
                 self._writer = False
                 self._condition.notify_all()
+
+
+def _storage_limit_bytes() -> int:
+    raw = os.environ.get("POLYPACK_MCP_STORAGE_LIMIT_BYTES", "0").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        print("polypack: ignoring invalid POLYPACK_MCP_STORAGE_LIMIT_BYTES", flush=True)
+        return 0
+    return max(0, value)
+
+
+def _start_storage_janitor(backend: MemoryBackend, operation_lock: ReadWriteLock):
+    limit_bytes = _storage_limit_bytes()
+    cleanup = getattr(backend, "cleanup_storage", None)
+    if limit_bytes <= 0 or cleanup is None:
+        return None, None
+    stop = Event()
+    interval = max(30, int(os.environ.get("POLYPACK_MCP_CLEANUP_INTERVAL_SECONDS", "300")))
+
+    def run() -> None:
+        while not stop.is_set():
+            try:
+                with operation_lock.write():
+                    result = cleanup(limit_bytes)
+                if result.get("removed", 0):
+                    print(
+                        f"polypack: storage cleanup removed {result['removed']} memories "
+                        f"({result['beforeBytes']} -> {result['afterBytes']} bytes)",
+                        flush=True,
+                    )
+            except Exception as exc:  # cleanup must never take down the MCP server
+                print(f"polypack: storage cleanup failed: {type(exc).__name__}: {exc}", flush=True)
+            if stop.wait(interval):
+                return
+
+    thread = Thread(target=run, name="polypack-storage-janitor", daemon=True)
+    thread.start()
+    return stop, thread
 from .backend import InMemoryBackend, MemoryBackend
 from .service import MemoryService
 from .setup import install_user_service, print_client_config
@@ -333,6 +374,9 @@ operation=relationship_diagnostics to audit legacy provenance.responds_to fields
 Context is a soft filter unless strict_context=true. If recall is empty, retry
 with a broader query and strict_context=false before assuming the store is empty.
 """
+    janitor_stop, janitor_thread = _start_storage_janitor(backend, operation_lock)
+    mcp._polypack_janitor_stop = janitor_stop
+    mcp._polypack_janitor_thread = janitor_thread
     return mcp
 
 def main() -> None:
@@ -346,11 +390,14 @@ def main() -> None:
     parser.add_argument("--store", help="Polypack directory for durable storage")
     parser.add_argument("--host", default="127.0.0.1", help="Host used by the HTTP server")
     parser.add_argument("--port", type=int, default=8765, help="Port used by the shared HTTP endpoint")
+    parser.add_argument("--storage-limit-mb", type=int, default=0,
+                        help="Clean low-value memories when the graph exceeds this many MiB")
     parser.add_argument("--no-start", action="store_true", help="Write the user service without starting it")
     args = parser.parse_args()
     if args.command == "setup":
         store = args.store or "~/.local/share/polypack-mcp"
-        unit = install_user_service(store, port=args.port, start=not args.no_start)
+        unit = install_user_service(store, port=args.port, start=not args.no_start,
+                                    storage_limit_mb=args.storage_limit_mb)
         print(f"Installed {unit}")
         print_client_config(args.port)
         return
@@ -370,6 +417,12 @@ def main() -> None:
             signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
         server.run(transport=args.transport)
     finally:
+        janitor_stop = getattr(server, "_polypack_janitor_stop", None)
+        janitor_thread = getattr(server, "_polypack_janitor_thread", None)
+        if janitor_stop is not None:
+            janitor_stop.set()
+        if janitor_thread is not None:
+            janitor_thread.join(timeout=5)
         if backend is not None:
             backend.close_store()
 

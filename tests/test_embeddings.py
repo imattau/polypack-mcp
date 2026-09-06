@@ -129,3 +129,25 @@ def test_system_reindex_restores_service_store_ownership(monkeypatch, tmp_path):
         ("reindex", store),
         ("run", ["chown", "-R", "polypack:polypack", str(store)], {"check": True}),
     ]
+
+
+def test_model_sources_accept_catalog_entries_and_hugging_face_repo_urls():
+    assert embedding_cli._model_name("all-minilm-l6-v2") == "sentence-transformers/all-MiniLM-L6-v2"
+    assert embedding_cli._model_name("custom", "https://huggingface.co/BAAI/bge-base-en-v1.5") == "BAAI/bge-base-en-v1.5"
+    with pytest.raises(ValueError, match="single file"):
+        embedding_cli._model_name("custom", "https://huggingface.co/BAAI/bge-base-en-v1.5/resolve/main/model.safetensors")
+
+
+def test_storage_cleanup_prefers_suppressed_memories(tmp_path):
+    store = tmp_path / "store"
+    backend = PolypackBackend(PolyGraph.open(str(store)))
+    suppressed = backend.store("suppressed memory")
+    backend.store("ordinary memory")
+    backend.suppress(suppressed["id"])
+    before = backend.storage_usage_bytes()
+
+    result = backend.cleanup_storage(max(1, before - 1))
+
+    assert result["removed"] >= 1
+    assert result["removedIds"][0] == suppressed["id"]
+    backend.close_store()

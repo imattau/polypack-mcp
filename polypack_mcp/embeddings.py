@@ -1,4 +1,4 @@
-"""Embedding providers and the optional local Qwen embedding helper."""
+"""Embedding providers and the optional local Sentence Transformers helper."""
 
 from __future__ import annotations
 
@@ -68,8 +68,8 @@ class HTTPEmbeddingProvider:
 
 class _QwenHandler(BaseHTTPRequestHandler):
     model: Any = None
-    model_name = "Qwen/Qwen3-Embedding-0.6B"
-    dimension = 1024
+    model_name = os.environ.get("POLYPACK_MCP_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    dimension: int | None = None
     load_error: str | None = None
     model_lock = threading.Lock()
     idle_timeout = DEFAULT_IDLE_TIMEOUT
@@ -87,12 +87,9 @@ class _QwenHandler(BaseHTTPRequestHandler):
             if cls.model is not None or cls.load_error is not None:
                 return
             try:
-                import torch
                 from sentence_transformers import SentenceTransformer
 
-                cls.model = SentenceTransformer(
-                    cls.model_name, model_kwargs={"torch_dtype": torch.bfloat16}
-                )
+                cls.model = SentenceTransformer(cls.model_name)
                 cls.dimension = int(cls.model.get_sentence_embedding_dimension())
             except Exception as exc:  # startup health should explain dependency/model failures
                 cls.load_error = f"{type(exc).__name__}: {exc}"
@@ -130,7 +127,7 @@ class _QwenHandler(BaseHTTPRequestHandler):
             return
         self._json(200, {
             "status": "ok",
-            "provider": "qwen3",
+            "provider": "sentence-transformers",
             "model": self.model_name,
             "dimension": self.dimension,
             "version": "1",

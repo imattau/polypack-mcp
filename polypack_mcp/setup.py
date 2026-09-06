@@ -9,8 +9,11 @@ from pathlib import Path
 
 
 def install_user_service(store: str, port: int = 8765, start: bool = True,
-                         embedding_url: str | None = None) -> Path:
+                         embedding_url: str | None = None,
+                         storage_limit_mb: int = 0) -> Path:
     """Install a systemd user service and optionally start it."""
+    if storage_limit_mb < 0:
+        raise ValueError("storage_limit_mb must be zero or greater")
     systemctl = shutil.which("systemctl")
     if not systemctl:
         raise RuntimeError("systemctl was not found; use --print-config or start the HTTP server manually")
@@ -33,6 +36,7 @@ def install_user_service(store: str, port: int = 8765, start: bool = True,
             "Type=simple\n"
             "ExecStart={executable} --transport streamable-http --port {port} --store {store}\n"
             "{embedding_environment}"
+            "{storage_environment}"
             "Restart=on-failure\n"
             "RestartSec=3\n\n"
             "[Install]\n"
@@ -41,6 +45,8 @@ def install_user_service(store: str, port: int = 8765, start: bool = True,
             executable=executable, port=port, store=store_path,
             embedding_environment=(f"Environment=POLYPACK_MCP_EMBEDDING_URL={embedding_url}\n"
                                    if embedding_url else ""),
+            storage_environment=(f"Environment=POLYPACK_MCP_STORAGE_LIMIT_BYTES={storage_limit_mb * 1024 * 1024}\n"
+                                 if storage_limit_mb > 0 else ""),
         ),
         encoding="utf-8",
     )

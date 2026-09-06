@@ -33,7 +33,36 @@ configuration files automatically.
 ## Optional semantic retrieval
 
 The base installation does not download an embedding model. To add managed
-local Qwen retrieval after a Debian/RPM installation:
+local semantic retrieval after a Debian/RPM installation, select one of these
+curated Hugging Face models (or supply another Hugging Face repository URL):
+
+| Key | Model | Profile |
+| --- | --- | --- |
+| `all-minilm-l6-v2` | `sentence-transformers/all-MiniLM-L6-v2` | Small English default, 384 dimensions |
+| `bge-small-en-v1.5` | `BAAI/bge-small-en-v1.5` | Small English alternative, 384 dimensions |
+| `multilingual-e5-small` | `intfloat/multilingual-e5-small` | Multilingual, 384 dimensions |
+| `qwen3-embedding-0.6b` | `Qwen/Qwen3-Embedding-0.6B` | 100+ languages, 1024 dimensions, larger footprint |
+
+The YunoHost package exposes these choices in its configuration panel. The
+panel can install/download and cache the model, accept an optional Hugging Face
+API token, and reindex existing memories. The token is stored with restrictive
+permissions and is not included in status output. For a command-line setup,
+the small English default is:
+
+```sh
+polypack-mcp embeddings setup all-minilm-l6-v2 --system --store /var/lib/polypack-mcp
+```
+
+For a different model, use its Hugging Face repository URL or `owner/model` id:
+
+```sh
+polypack-mcp embeddings setup custom \
+  --custom-url https://huggingface.co/BAAI/bge-base-en-v1.5 \
+  --system --store /var/lib/polypack-mcp
+```
+
+The model cache is kept under `/var/lib/polypack-mcp/.embedding/cache` and is
+reused across restarts and upgrades. The original Qwen example remains valid:
 
 ```sh
 sudo polypack-mcp embeddings setup qwen3 --system --store /var/lib/polypack-mcp

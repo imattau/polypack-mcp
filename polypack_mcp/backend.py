@@ -6,6 +6,7 @@ import math
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from .embeddings import EmbeddingProvider
@@ -62,6 +63,8 @@ class MemoryBackend(Protocol):
     def stats(self) -> dict[str, Any]: ...
     def memory_thread(self, start_id: str, max_depth: int = 10) -> dict[str, Any]: ...
     def link_batch(self, links: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+    def storage_usage_bytes(self) -> int: ...
+    def cleanup_storage(self, limit_bytes: int, **kwargs: Any) -> dict[str, Any]: ...
 
 
 
@@ -392,6 +395,12 @@ class InMemoryBackend:
     def stats(self) -> dict[str, Any]:
         return {"memories": len(self.memories), "edges": len(self.edges)}
 
+    def storage_usage_bytes(self) -> int:
+        return 0
+
+    def cleanup_storage(self, limit_bytes: int, **kwargs: Any) -> dict[str, Any]:
+        return {"enabled": False, "reason": "in-memory backend", "removed": 0}
+
     def _relationship_diagnostics(self) -> dict[str, Any]:
         edge_pairs = {(edge["source"], edge["target"]) for edge in self.edges
                       if edge["type"] == "RESPONDS_TO"}
@@ -462,6 +471,76 @@ class PolypackBackend(InMemoryBackend):
     def close_store(self) -> None:
         """Flush and close the attached Polypack store, if any."""
         self.graph.close_store()
+
+    def storage_usage_bytes(self) -> int:
+        directory = getattr(self.graph, "_store_directory", None)
+        if not directory:
+            return 0
+        root = Path(directory)
+        total = 0
+        for path in root.rglob("*"):
+            if path.is_file() and ".embedding" not in path.relative_to(root).parts:
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    continue
+        return total
+
+    def cleanup_storage(self, limit_bytes: int, **kwargs: Any) -> dict[str, Any]:
+        """Remove low-value memories until the store is below a safe target.
+
+        Cleanup is deliberately conservative: suppressed and superseded memories
+        are selected first, followed by the least activated and oldest memories.
+        Embedding caches are outside the graph directory and are never deleted by
+        this policy. The 90% target prevents repeated cleanup on every write.
+        """
+        if not isinstance(limit_bytes, int) or limit_bytes <= 0:
+            raise ValueError("limit_bytes must be a positive integer")
+        target_ratio = float(kwargs.get("target_ratio", 0.9))
+        if not 0 < target_ratio < 1:
+            raise ValueError("target_ratio must be between 0 and 1")
+        max_deletions = int(kwargs.get("max_deletions", 1000))
+        before = self.storage_usage_bytes()
+        target = max(1, int(limit_bytes * target_ratio))
+        if before <= limit_bytes:
+            return {"enabled": True, "limitBytes": limit_bytes, "targetBytes": target,
+                    "beforeBytes": before, "afterBytes": before, "removed": 0}
+
+        candidates = []
+        for memory_id, node in list(self.graph._nodes.items()):
+            item = self._node(memory_id)
+            data = node.get("data", {})
+            stale = bool(item.get("suppressed") or data.get("supersededBy") or
+                         node.get("supersededBy") or node.get("supersedes"))
+            # Entity memories are retained longer than transient task outcomes,
+            # but they remain eligible if the store cannot get under the limit.
+            entity_penalty = 1 if item.get("class") == "entity" else 0
+            candidates.append((not stale, entity_penalty, item["activation"],
+                               item["confidence"], item["createdAt"], memory_id))
+        candidates.sort()
+
+        removed: list[str] = []
+        for _stale, _entity, _activation, _confidence, _created, memory_id in candidates:
+            if len(removed) >= max_deletions:
+                break
+            node = self.graph._nodes.get(memory_id)
+            if node is None:
+                continue
+            self.graph.remove_node(memory_id, expected_revision=node.get("revision"))
+            removed.append(memory_id)
+            # Checkpoint periodically so cleanup reacts to actual disk usage,
+            # rather than deleting the whole graph based on in-memory estimates.
+            if len(removed) % 32 == 0:
+                self._checkpoint()
+                if self.storage_usage_bytes() <= target:
+                    break
+
+        if removed:
+            self._checkpoint()
+        after = self.storage_usage_bytes()
+        return {"enabled": True, "limitBytes": limit_bytes, "targetBytes": target,
+                "beforeBytes": before, "afterBytes": after, "removed": len(removed),
+                "removedIds": removed, "stillOverLimit": after > limit_bytes}
 
     def store(self, content: str, **kwargs: Any) -> dict[str, Any]:
         now = int(time.time() * 1000); memory_id = kwargs.get("id", str(uuid.uuid4()))
@@ -812,5 +891,6 @@ class PolypackBackend(InMemoryBackend):
 
     def stats(self) -> dict[str, Any]:
         return {"memories": self.graph.size, "edges": sum(len(edges) for edges in self.graph._edges.values()),
+                "storageBytes": self.storage_usage_bytes(),
                 "embedding": self.embedding_status(),
                 "embeddingError": self._embedding_error}

@@ -54,6 +54,8 @@ EOF
 cat > "$stage/etc/default/polypack-mcp" <<'EOF'
 # Change this value before restarting the service if port 8765 is occupied.
 POLYPACK_MCP_PORT=8765
+# Set to a positive byte count to enable conservative automatic cleanup.
+POLYPACK_MCP_STORAGE_LIMIT_BYTES=0
 EOF
 echo /etc/default/polypack-mcp > "$stage/DEBIAN/conffiles"
 

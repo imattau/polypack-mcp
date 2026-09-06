@@ -70,6 +70,23 @@ helper is stopped. Inspect the provider with:
 polypack-mcp embeddings status
 ```
 
+The same lifecycle supports the curated model keys `all-minilm-l6-v2`,
+`bge-small-en-v1.5`, `multilingual-e5-small`, and
+`qwen3-embedding-0.6b`, plus `custom --custom-url URL` for a Hugging Face
+repository. Model files are cached below the store's `.embedding/cache`
+directory. `HF_TOKEN` may be placed in `.embedding/embedding.env` with mode
+0600 before setup when authenticated Hugging Face access is useful.
+
+### Database storage cleanup
+
+Set `POLYPACK_MCP_STORAGE_LIMIT_BYTES` to a positive byte count in the service
+environment to enable conservative automatic cleanup. The janitor checks the
+graph store at startup and periodically thereafter; it excludes the embedding
+model cache, removes suppressed/superseded memories first, then the least
+activated and oldest memories, and stops at 90% of the configured limit. A
+value of `0` disables cleanup. The YunoHost package exposes this as a dropdown
+with practical limits from 512 MiB to 50 GiB.
+
 ### Resource footprint and idle unload
 
 Qwen3-Embedding-0.6B loads in bfloat16, using roughly 1GB resident once a
