@@ -19,12 +19,12 @@
       "theme": "dark"
     }
   ],
-  "version": "0.1.29",
+  "version": "0.1.30",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "polypack-mcp",
-      "version": "0.1.29",
+      "version": "0.1.30",
       "transport": {
         "type": "stdio"
       }

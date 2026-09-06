@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+from urllib.error import HTTPError
 
 from .embeddings import HTTPEmbeddingProvider
 
@@ -162,6 +163,16 @@ def _wait_for_helper(provider: HTTPEmbeddingProvider, timeout: int = 900) -> dic
     while time.time() < deadline:
         try:
             return provider.health()
+        except HTTPError as exc:
+            # A 503 from /health contains the model-load exception. Retrying
+            # that permanent error for the full 15-minute timeout obscures the
+            # cause and makes the YunoHost action appear hung.
+            try:
+                payload = json.loads(exc.read().decode("utf-8"))
+                detail = payload.get("error") or payload.get("detail") or str(exc)
+            except Exception:
+                detail = str(exc)
+            raise RuntimeError(f"embedding helper health check failed: {detail}") from exc
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             time.sleep(2)
@@ -255,8 +266,8 @@ def setup_model(
             pip,
             "install",
             "--upgrade",
-            "transformers<6.0.0,>=4.41.0",
-            "huggingface-hub>=0.23.0",
+            "transformers<5.0.0,>=4.41.0",
+            "huggingface-hub>=0.23.0,<1.0",
             "numpy>=1.20.0",
             "scikit-learn>=1.2.2",
             "scipy",

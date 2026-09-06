@@ -1,5 +1,7 @@
+import io
 import pytest
 from pathlib import Path
+from urllib.error import HTTPError
 
 import polypack_mcp.embedding_cli as embedding_cli
 import polypack_mcp.embeddings as embeddings
@@ -150,6 +152,23 @@ def test_system_reindex_uses_yunohost_service_ownership(monkeypatch, tmp_path):
         ("reindex", store),
         ("run", ["chown", "-R", "polypack_mcp:polypack_mcp", str(store)], {"check": True}),
     ]
+
+
+def test_helper_health_error_is_reported_without_waiting_for_timeout():
+    error = HTTPError(
+        "http://127.0.0.1:8766/health",
+        503,
+        "service unavailable",
+        {},
+        io.BytesIO(b'{"error":"model load failed"}'),
+    )
+
+    class BrokenProvider:
+        def health(self):
+            raise error
+
+    with pytest.raises(RuntimeError, match="model load failed"):
+        embedding_cli._wait_for_helper(BrokenProvider(), timeout=900)
 
 
 def test_model_sources_accept_catalog_entries_and_hugging_face_repo_urls():
