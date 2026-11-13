@@ -65,3 +65,5 @@ def print_client_config(port: int = 8765) -> None:
     print(f'url = "{url}"')
     print("\nClaude Desktop configuration:")
     print('{"mcpServers": {"polypack": {"url": "' + url + '"}}}')
+    print("\nJan:")
+    print(f"jan cli mcp add polypack-mcp --type http --url {url} --active")

@@ -175,6 +175,29 @@ When using the shared Streamable HTTP service, do not also configure clients wit
 `command` and the same `--store` path. That would start competing server
 processes.
 
+Jan:
+
+The shared loopback endpoint accepts both direct unauthenticated requests and
+loopback OAuth 2.1 browser sign-in (with Dynamic Client Registration and PKCE):
+
+```sh
+jan cli mcp add polypack-mcp --type http --url http://127.0.0.1:8765/mcp/ --active
+```
+
+Or in Jan's `mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "polypack-mcp": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp/",
+      "active": true
+    }
+  }
+}
+```
+
 ## RPM installation
 
 On Fedora, RHEL-compatible, or other RPM-based systems:

@@ -1,11 +1,17 @@
 """FastMCP server for Polypack adaptive memory."""
 
 import argparse
+import base64
+import hashlib
 import json
 import os
+import secrets
 import signal
+import time
+import uuid
 from contextlib import contextmanager
 from threading import Condition, Event, RLock, Thread
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from .backend import MemoryBackend, MemoryClass
 
@@ -97,6 +103,414 @@ def _start_storage_janitor(backend: MemoryBackend, operation_lock: ReadWriteLock
 from .backend import InMemoryBackend, MemoryBackend
 from .service import MemoryService
 from .setup import install_user_service, print_client_config
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_MAX_OAUTH_CLIENTS = 256
+_AUTH_CODE_TTL_SECONDS = 300
+_ACCESS_TOKEN_TTL_SECONDS = 86400
+_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, mcp-protocol-version",
+}
+_NO_STORE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Pragma": "no-cache",
+}
+
+
+class _NormalizeMCPPathMiddleware:
+    """Rewrite /mcp to /mcp/ so clients avoid a 307 redirect from Starlette Mount."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") == "http" and scope.get("path") == "/mcp":
+            scope = dict(scope, path="/mcp/", raw_path=b"/mcp/")
+        await self.app(scope, receive, send)
+
+
+def _is_loopback_redirect_uri(uri: str) -> bool:
+    parsed = urlparse(uri)
+    scheme = parsed.scheme.lower()
+    if not scheme:
+        return False
+    if scheme in {"http", "https"}:
+        return (parsed.hostname or "").lower() in _LOOPBACK_HOSTS
+    return True
+
+
+def _redirect_uri_matches(requested: str, registered_list: list[str]) -> bool:
+    if requested in registered_list:
+        return True
+    req = urlparse(requested)
+    if req.scheme.lower() != "http" or (req.hostname or "").lower() not in _LOOPBACK_HOSTS:
+        return False
+    for entry in registered_list:
+        reg = urlparse(entry)
+        if (
+            reg.scheme.lower() == "http"
+            and (reg.hostname or "").lower() in _LOOPBACK_HOSTS
+            and req.path == reg.path
+        ):
+            return True
+    return False
+
+
+def _append_query_params(url: str, extra: dict[str, str]) -> str:
+    parsed = urlparse(url)
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    for key, value in extra.items():
+        if value is not None:
+            query.append((key, value))
+    return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def _parse_basic_auth(header_value: str | None) -> tuple[str | None, str | None]:
+    if not header_value or not header_value.lower().startswith("basic "):
+        return None, None
+    encoded = header_value[6:].strip()
+    try:
+        decoded = base64.b64decode(encoded).decode("utf-8")
+    except Exception:
+        return None, None
+    if ":" not in decoded:
+        return None, None
+    client_id, client_secret = decoded.split(":", 1)
+    return client_id, client_secret
+
+
+def _register_loopback_oauth_routes(mcp, host: str, port: int) -> None:
+    """Expose loopback OAuth 2.1 discovery, DCR, and PKCE endpoints without gating /mcp."""
+    from starlette.responses import JSONResponse, RedirectResponse, Response
+    from starlette.routing import Mount
+
+    lock = RLock()
+    clients: dict[str, dict] = {}
+    auth_codes: dict[str, dict] = {}
+    refresh_tokens: dict[str, dict] = {}
+
+    def _base_url(request) -> str:
+        if request.url.netloc:
+            return f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
+        return f"http://{host}:{port}"
+
+    def _json_response(payload: dict, status_code: int = 200, *, no_store: bool = False) -> JSONResponse:
+        headers = dict(_CORS_HEADERS)
+        if no_store:
+            headers.update(_NO_STORE_HEADERS)
+        return JSONResponse(payload, status_code=status_code, headers=headers)
+
+    def _options_response() -> Response:
+        return Response(status_code=204, headers=dict(_CORS_HEADERS))
+
+    def _oauth_error(error: str, description: str, status_code: int = 400) -> JSONResponse:
+        return _json_response(
+            {"error": error, "error_description": description},
+            status_code=status_code,
+            no_store=True,
+        )
+
+    async def auth_server_metadata(request):
+        if request.method == "OPTIONS":
+            return _options_response()
+        base = _base_url(request)
+        return _json_response(
+            {
+                "issuer": base,
+                "authorization_endpoint": f"{base}/authorize",
+                "token_endpoint": f"{base}/token",
+                "registration_endpoint": f"{base}/register",
+                "revocation_endpoint": f"{base}/revoke",
+                "response_types_supported": ["code"],
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "token_endpoint_auth_methods_supported": ["none", "client_secret_post", "client_secret_basic"],
+                "code_challenge_methods_supported": ["S256", "plain"],
+            }
+        )
+
+    async def protected_resource_metadata(request):
+        if request.method == "OPTIONS":
+            return _options_response()
+        base = _base_url(request)
+        return _json_response(
+            {
+                "resource": f"{base}/mcp/",
+                "authorization_servers": [base],
+                "bearer_methods_supported": ["header"],
+            }
+        )
+
+    async def register_client(request):
+        if request.method == "OPTIONS":
+            return _options_response()
+        raw_body = await request.body()
+        if not raw_body.strip():
+            body = {}
+        else:
+            try:
+                body = json.loads(raw_body)
+            except ValueError:
+                return _oauth_error("invalid_client_metadata", "Request body must be a JSON object")
+            if not isinstance(body, dict):
+                return _oauth_error("invalid_client_metadata", "Request body must be a JSON object")
+
+        if "redirect_uris" in body:
+            redirect_uris = body["redirect_uris"]
+            if (
+                not isinstance(redirect_uris, list)
+                or not redirect_uris
+                or not all(isinstance(uri, str) and uri.strip() for uri in redirect_uris)
+            ):
+                return _oauth_error("invalid_redirect_uri", "redirect_uris must be a non-empty list of URI strings")
+        else:
+            redirect_uris = []
+
+        raw_client_id = body.get("client_id")
+        client_id = raw_client_id if isinstance(raw_client_id, str) and raw_client_id.strip() else str(uuid.uuid4())
+        auth_method = body.get("token_endpoint_auth_method") or "none"
+        grant_types = body.get("grant_types") or ["authorization_code", "refresh_token"]
+        response_types = body.get("response_types") or ["code"]
+
+        record = dict(body)
+        record.update(
+            {
+                "client_id": client_id,
+                "client_id_issued_at": int(time.time()),
+                "redirect_uris": redirect_uris,
+                "token_endpoint_auth_method": auth_method,
+                "grant_types": grant_types,
+                "response_types": response_types,
+            }
+        )
+        if auth_method != "none":
+            record["client_secret"] = secrets.token_hex(32)
+            record["client_secret_expires_at"] = 0
+
+        with lock:
+            clients.pop(client_id, None)
+            while len(clients) >= _MAX_OAUTH_CLIENTS:
+                oldest = next(iter(clients))
+                clients.pop(oldest, None)
+            clients[client_id] = record
+
+        return _json_response(record, status_code=201, no_store=True)
+
+    async def authorize(request):
+        params = dict(request.query_params)
+        if request.method == "POST":
+            form = await request.form()
+            for key, value in form.items():
+                if isinstance(value, str):
+                    params[key] = value
+
+        response_type = params.get("response_type", "code")
+        if response_type != "code":
+            return _oauth_error("unsupported_response_type", "Only response_type=code is supported")
+
+        client_id = params.get("client_id")
+        if not client_id:
+            return _oauth_error("invalid_request", "client_id is required")
+
+        requested_redirect_uri = params.get("redirect_uri")
+        redirect_uri_provided = bool(requested_redirect_uri)
+
+        with lock:
+            client = clients.get(client_id)
+
+        if client is not None:
+            registered_uris = client.get("redirect_uris") or []
+            if requested_redirect_uri:
+                if registered_uris and not _redirect_uri_matches(requested_redirect_uri, registered_uris):
+                    return _oauth_error("invalid_request", "redirect_uri does not match registered client URIs")
+                if not registered_uris and not _is_loopback_redirect_uri(requested_redirect_uri):
+                    return _oauth_error("invalid_request", "redirect_uri must be a loopback or native URI")
+                redirect_uri = requested_redirect_uri
+            elif len(registered_uris) == 1:
+                redirect_uri = registered_uris[0]
+            else:
+                return _oauth_error("invalid_request", "redirect_uri is required")
+        else:
+            if not requested_redirect_uri or not _is_loopback_redirect_uri(requested_redirect_uri):
+                return _oauth_error("invalid_request", "redirect_uri must be a loopback or native URI")
+            redirect_uri = requested_redirect_uri
+
+        code = secrets.token_urlsafe(32)
+        now = time.time()
+        with lock:
+            expired = [k for k, v in auth_codes.items() if v["expires_at"] < now]
+            for k in expired:
+                auth_codes.pop(k, None)
+            auth_codes[code] = {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "redirect_uri_provided": redirect_uri_provided,
+                "code_challenge": params.get("code_challenge"),
+                "code_challenge_method": params.get("code_challenge_method") or "S256",
+                "scope": params.get("scope"),
+                "expires_at": now + _AUTH_CODE_TTL_SECONDS,
+            }
+
+        extra = {"code": code}
+        if params.get("state") is not None:
+            extra["state"] = params["state"]
+        redirect_url = _append_query_params(redirect_uri, extra)
+        return RedirectResponse(url=redirect_url, status_code=302, headers=dict(_NO_STORE_HEADERS))
+
+    async def exchange_token(request):
+        if request.method == "OPTIONS":
+            return _options_response()
+
+        params: dict[str, str] = {k: v for k, v in request.query_params.items()}
+        content_type = (request.headers.get("content-type") or "").lower()
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+            except ValueError:
+                body = {}
+            if isinstance(body, dict):
+                for key, value in body.items():
+                    if isinstance(value, str):
+                        params[key] = value
+        else:
+            try:
+                form = await request.form()
+                for key, value in form.items():
+                    if isinstance(value, str):
+                        params[key] = value
+            except Exception:
+                pass
+
+        basic_id, basic_secret = _parse_basic_auth(request.headers.get("authorization"))
+        req_client_id = params.get("client_id") or basic_id
+        req_client_secret = params.get("client_secret") if "client_secret" in params else basic_secret
+
+        grant_type = params.get("grant_type")
+        if grant_type == "authorization_code":
+            code = params.get("code")
+            with lock:
+                auth_code = auth_codes.pop(code, None) if code else None
+            if not auth_code or auth_code["expires_at"] < time.time():
+                return _oauth_error("invalid_grant", "Invalid or expired authorization code")
+
+            if req_client_id and req_client_id != auth_code["client_id"]:
+                return _oauth_error("invalid_grant", "client_id does not match authorization code")
+
+            with lock:
+                client = clients.get(auth_code["client_id"])
+            if client and client.get("client_secret") and req_client_secret is not None:
+                if not secrets.compare_digest(req_client_secret, client["client_secret"]):
+                    return _oauth_error("unauthorized_client", "Invalid client_secret")
+
+            req_redirect_uri = params.get("redirect_uri")
+            if auth_code["redirect_uri_provided"] and req_redirect_uri and req_redirect_uri != auth_code["redirect_uri"]:
+                return _oauth_error("invalid_request", "redirect_uri did not match authorization request")
+
+            code_challenge = auth_code.get("code_challenge")
+            if code_challenge:
+                code_verifier = params.get("code_verifier")
+                if not code_verifier:
+                    return _oauth_error("invalid_grant", "code_verifier is required")
+                method = auth_code.get("code_challenge_method", "S256")
+                if method == "S256":
+                    try:
+                        digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+                    except UnicodeEncodeError:
+                        return _oauth_error("invalid_grant", "incorrect code_verifier")
+                    computed = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+                elif method == "plain":
+                    computed = code_verifier
+                else:
+                    return _oauth_error("invalid_grant", f"Unsupported code_challenge_method: {method}")
+                if not secrets.compare_digest(computed, code_challenge):
+                    return _oauth_error("invalid_grant", "incorrect code_verifier")
+
+            access_token = secrets.token_urlsafe(32)
+            refresh_token = secrets.token_urlsafe(32)
+            with lock:
+                refresh_tokens[refresh_token] = {
+                    "client_id": auth_code["client_id"],
+                    "scope": auth_code.get("scope"),
+                }
+            payload = {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "expires_in": _ACCESS_TOKEN_TTL_SECONDS,
+                "refresh_token": refresh_token,
+            }
+            if auth_code.get("scope"):
+                payload["scope"] = auth_code["scope"]
+            return _json_response(payload, status_code=200, no_store=True)
+
+        if grant_type == "refresh_token":
+            old_refresh = params.get("refresh_token")
+            if not old_refresh:
+                return _oauth_error("invalid_request", "refresh_token is required")
+            with lock:
+                prior = refresh_tokens.pop(old_refresh, None)
+                new_access = secrets.token_urlsafe(32)
+                new_refresh = secrets.token_urlsafe(32)
+                scope = params.get("scope") or (prior.get("scope") if prior else None)
+                refresh_tokens[new_refresh] = {
+                    "client_id": req_client_id or (prior.get("client_id") if prior else None),
+                    "scope": scope,
+                }
+            payload = {
+                "access_token": new_access,
+                "token_type": "Bearer",
+                "expires_in": _ACCESS_TOKEN_TTL_SECONDS,
+                "refresh_token": new_refresh,
+            }
+            if scope:
+                payload["scope"] = scope
+            return _json_response(payload, status_code=200, no_store=True)
+
+        return _oauth_error("unsupported_grant_type", f"Unsupported grant_type: {grant_type}")
+
+    async def revoke_token(request):
+        if request.method == "OPTIONS":
+            return _options_response()
+        return _json_response({}, status_code=200)
+
+    for path in (
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/oauth-authorization-server/mcp",
+        "/mcp/.well-known/oauth-authorization-server",
+    ):
+        mcp.custom_route(path, methods=["GET", "OPTIONS"], include_in_schema=False)(auth_server_metadata)
+
+    for path in (
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+        "/mcp/.well-known/oauth-protected-resource",
+    ):
+        mcp.custom_route(path, methods=["GET", "OPTIONS"], include_in_schema=False)(protected_resource_metadata)
+
+    for path in ("/register", "/mcp/register"):
+        mcp.custom_route(path, methods=["POST", "OPTIONS"], include_in_schema=False)(register_client)
+
+    for path in ("/authorize", "/mcp/authorize"):
+        mcp.custom_route(path, methods=["GET", "POST"], include_in_schema=False)(authorize)
+
+    for path in ("/token", "/mcp/token"):
+        mcp.custom_route(path, methods=["POST", "OPTIONS"], include_in_schema=False)(exchange_token)
+
+    for path in ("/revoke", "/mcp/revoke"):
+        mcp.custom_route(path, methods=["POST", "OPTIONS"], include_in_schema=False)(revoke_token)
+
+    orig_streamable_http_app = mcp.streamable_http_app
+
+    def streamable_http_app_with_oauth():
+        starlette_app = orig_streamable_http_app()
+        starlette_app.router.routes[:] = [
+            *[route for route in starlette_app.router.routes if not isinstance(route, Mount)],
+            *[route for route in starlette_app.router.routes if isinstance(route, Mount)],
+        ]
+        starlette_app.add_middleware(_NormalizeMCPPathMiddleware)
+        return starlette_app
+
+    mcp.streamable_http_app = streamable_http_app_with_oauth
 
 def create_server(backend: MemoryBackend | None = None, host: str = "127.0.0.1", port: int = 8765):
     try:
@@ -374,6 +788,7 @@ operation=relationship_diagnostics to audit legacy provenance.responds_to fields
 Context is a soft filter unless strict_context=true. If recall is empty, retry
 with a broader query and strict_context=false before assuming the store is empty.
 """
+    _register_loopback_oauth_routes(mcp, host=host, port=port)
     janitor_stop, janitor_thread = _start_storage_janitor(backend, operation_lock)
     mcp._polypack_janitor_stop = janitor_stop
     mcp._polypack_janitor_thread = janitor_thread

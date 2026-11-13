@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "polypack-mcp"
-version = "0.1.31"
+version = "0.1.32"
 description = "MCP server exposing Polypack as persistent adaptive memory"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.9,<1.10", "anyio>=4.5,<4.10"]
+dependencies = ["mcp>=1.9,<1.10", "anyio>=4.5,<4.10", "pydantic>=2.7,<2.14"]
 
 [project.optional-dependencies]
 polypack = ["polypack-db>=3.3.1"]

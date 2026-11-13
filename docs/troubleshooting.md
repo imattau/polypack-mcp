@@ -51,6 +51,17 @@ If the client configuration contains both `command` and `--store`, remove that
 entry and replace it with the URL configuration. Restart the client after
 changing its MCP settings.
 
+## Jan OAuth sign-in or 404 on `/register`
+
+Older `polypack-mcp` releases did not expose OAuth discovery or Dynamic Client
+Registration endpoints on the local loopback server, causing Jan's browser
+sign-in flow to fail with `POST http://127.0.0.1:8765/register: HTTP 404 Not Found`.
+Current releases expose loopback OAuth 2.1 discovery, `/register`, `/authorize`,
+and `/token` (with PKCE) alongside the unauthenticated Streamable HTTP endpoint
+at both `http://127.0.0.1:8765/mcp/` and `http://127.0.0.1:8765/mcp`. Upgrade and
+restart `polypack-mcp`, or configure Jan directly with
+`jan cli mcp add polypack-mcp --type http --url http://127.0.0.1:8765/mcp/ --active`.
+
 ## Store lock errors
 
 A second server process may already be using the store. Check the service

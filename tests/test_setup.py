@@ -7,3 +7,4 @@ def test_client_config_uses_shared_streamable_http_endpoint(capsys):
     assert "http://127.0.0.1:8123/mcp/" in output
     assert "mcp_servers.polypack" in output
     assert '"mcpServers"' in output
+    assert "jan cli mcp add polypack-mcp" in output
